@@ -1,0 +1,12 @@
+fn main() {
+    if std::env::var("CARGO_FEATURE_SEQUENCER").is_ok() {
+        tonic_build::configure()
+            .build_server(true)      // generate server traits
+            .build_client(true)      // generate client stubs (default)
+            .compile_protos(
+                &["proto/transaction.proto"],
+                &["proto"],
+            )
+            .expect("failed to compile protos");
+    }
+}

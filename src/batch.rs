@@ -1,6 +1,6 @@
 use crate::{
     config::SequencerConfig,
-    grpc::TxRequest,
+    pb::TxRequest,
 };
 use anyhow::Result;
 use tokio::sync::mpsc::Receiver;

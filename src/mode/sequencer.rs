@@ -1,13 +1,12 @@
 use crate::{
     batch::batch_loop,
-    config::{
-        SequencerConfig, SequencerAppState
-    },
-    grpc::TxRequest,
+    config::{SequencerConfig, SequencerAppState},
+    grpc::{make_server},
+    pb::{TxRequest},
     handlers::enroll::enroll_handler,
-};
-use crate::utils::{
-    load_certs, load_key, load_ca,
+    utils::{
+        load_certs, load_key, load_ca,
+    },
 };
 
 use std::{
@@ -27,7 +26,6 @@ pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
     let cert_chain  = load_certs(&cfg.server_cert).context("reading server certificate")?;
     let priv_key    = load_key(&cfg.server_key).context("reading server private key")?;
     let ca_store    = load_ca(&cfg.ca_root).context("reading CA root cert")?;
-
     let verifier    = AllowAnyAuthenticatedClient::new(ca_store);
     let srv_cfg     = RustlsServerConfig::builder()
         .with_safe_defaults()
@@ -37,22 +35,24 @@ pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
     let tls_config = RustlsConfig::from_config(Arc::new(srv_cfg));
 
     let (tx_ingest, rx_ingest) = mpsc::channel::<TxRequest>(10_000);
-    tokio::spawn(batch_loop(cfg.clone(), rx_ingest));
-
     let state = SequencerAppState { cfg: cfg.clone(), tx_ingest };
+    tokio::spawn(batch_loop(cfg.clone(), rx_ingest));
     
-    let app = Router::new()
+    /* ---------- HTTP(Axum) server ---------- */
+    let http_addr: SocketAddr = cfg.listen.parse().context("listen addr")?;
+    let http_app = Router::new()
         .route("/enroll", post(enroll_handler))
-        // .route("/ingest", post(ingest-handler))
-        .with_state(state);
+        .with_state(state.clone());
+    let http_srv = axum_server::bind_rustls(http_addr, tls_config)
+        .serve(http_app.into_make_service());
 
-    let addr: SocketAddr = cfg.listen
-        .parse()
-        .context("invalid listen address")?;
+    /* ---------- gRPC server ---------- */
+    // let grpc_addr = "0.0.0.0:50051".parse()?;
+    let grpc_addr: SocketAddr = cfg.grpc_listen.parse()?;
+    let grpc_srv = tonic::transport::Server::builder()
+        .add_service(make_server(state))
+        .serve(grpc_addr);
 
-    axum_server::bind_rustls(addr, tls_config)
-        .serve(app.into_make_service())
-        .await?;
-
+    tokio::join!(http_srv, grpc_srv);
     Ok(())
 }

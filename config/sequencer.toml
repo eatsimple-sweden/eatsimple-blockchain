@@ -1,5 +1,6 @@
 mode                = "sequencer"
 listen              = "0.0.0.0:8443"
+grpc_listen         = "0.0.0.0:50051"
 server_cert         = "/etc/eatsimple/seq.crt"
 server_key          = "/etc/eatsimple/seq.key"
 ca_root             = "/etc/eatsimple/ca.pem"

@@ -1,4 +1,4 @@
-use crate::grpc::{
+use crate::pb::{
     TxRequest,
 };
 
@@ -11,6 +11,7 @@ use tokio::sync::mpsc::Sender;
 pub struct SequencerConfig {
     pub mode: String,                       // should be "sequencer"
     pub listen: String,                     // ex 0.0.0.0:8443
+    pub grpc_listen: String,                // ex 0.0.0.0:50051
     pub server_cert: String,                // "/etc/eatsimple/seq.crt"
     pub server_key: String,                 // "/etc/eatsimple/seq.key"
     pub ca_root: String,                    // "/etc/eatsimple/ca.pem"
