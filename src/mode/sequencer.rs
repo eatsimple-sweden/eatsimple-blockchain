@@ -23,6 +23,8 @@ use rustls::{
 use tokio::sync::mpsc;
 
 pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
+    println!("[Sequencer] Starting setup...");
+
     let cert_chain  = load_certs(&cfg.server_cert).context("reading server certificate")?;
     let priv_key    = load_key(&cfg.server_key).context("reading server private key")?;
     let ca_store    = load_ca(&cfg.ca_root).context("reading CA root cert")?;
@@ -43,12 +45,16 @@ pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
     let http_app = Router::new()
         .route("/enroll", post(enroll_handler))
         .with_state(state.clone());
+        
+    println!("[Sequencer] Starting HTTPS server at {}", http_addr);
     let http_srv = axum_server::bind_rustls(http_addr, tls_config)
         .serve(http_app.into_make_service());
 
     /* ---------- gRPC server ---------- */
     // let grpc_addr = "0.0.0.0:50051".parse()?;
     let grpc_addr: SocketAddr = cfg.grpc_listen.parse()?;
+    
+    println!("[Sequencer] Starting gRPC server at {}", grpc_addr);
     let grpc_srv = tonic::transport::Server::builder()
         .add_service(make_server(state))
         .serve(grpc_addr);
