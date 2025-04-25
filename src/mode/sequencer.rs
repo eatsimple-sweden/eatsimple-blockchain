@@ -17,48 +17,87 @@ use anyhow::Context;
 use axum::{routing::post, Router};
 use axum_server::tls_rustls::RustlsConfig;
 use rustls::{
-    server::AllowAnyAuthenticatedClient,
+    Certificate, PrivateKey,
     ServerConfig as RustlsServerConfig,
 };
 use tokio::sync::mpsc;
+use tonic::transport::{ServerTlsConfig, Identity, Certificate as TonicTransportCertificate};
 
 pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
     println!("[Sequencer] Starting setup...");
 
-    let cert_chain  = load_certs(&cfg.server_cert).context("reading server certificate")?;
-    let priv_key    = load_key(&cfg.server_key).context("reading server private key")?;
-    let ca_store    = load_ca(&cfg.ca_root).context("reading CA root cert")?;
-    let verifier    = AllowAnyAuthenticatedClient::new(ca_store);
-    let srv_cfg     = RustlsServerConfig::builder()
-        .with_safe_defaults()
-        .with_client_cert_verifier(Arc::new(verifier))
-        .with_single_cert(cert_chain, priv_key)
-        .context("invalid TLS cert/key combo")?;
-    let tls_config = RustlsConfig::from_config(Arc::new(srv_cfg));
+    // --------------------------------------------------------------
+    //  Build a config WITHOUT client-auth for HTTPS
+    // --------------------------------------------------------------
+    let public_tls = {
+        let certs:  Vec<Certificate> = load_certs(&cfg.server_cert)?;
+        let key:    PrivateKey       = load_key(&cfg.server_key)?;
+    
+        let scfg = RustlsServerConfig::builder()
+            .with_safe_defaults()
+            .with_no_client_auth()              // no mTLS here
+            .with_single_cert(certs, key)
+            .context("public TLS config")?;
+    
+        RustlsConfig::from_config(Arc::new(scfg))
+    };
+    
+    
+    // --------------------------------------------------------------
+    //  Build a config WITH client-auth for gRPC
+    // --------------------------------------------------------------
+    let cert_pem = std::fs::read_to_string(&cfg.server_cert)?;
+    let key_pem  = std::fs::read_to_string(&cfg.server_key)?;
+    let ca_pem   = std::fs::read_to_string(&cfg.ca_root)?;
+
+    let server_identity = Identity::from_pem(cert_pem, key_pem);
+
+    let client_ca_root = TonicTransportCertificate::from_pem(ca_pem);
+
+    let mtls = ServerTlsConfig::new()
+        .identity(server_identity)
+        .client_ca_root(client_ca_root);
 
     let (tx_ingest, rx_ingest) = mpsc::channel::<TxRequest>(10_000);
     let state = SequencerAppState { cfg: cfg.clone(), tx_ingest };
     tokio::spawn(batch_loop(cfg.clone(), rx_ingest));
-    
-    /* ---------- HTTP(Axum) server ---------- */
-    let http_addr: SocketAddr = cfg.listen.parse().context("listen addr")?;
-    let http_app = Router::new()
+
+
+    // --------------------------------------------------------------
+    //  start Axum (public) on 0.0.0.0:8443 or 443
+    // --------------------------------------------------------------
+    let axum_addr: SocketAddr = cfg.listen.parse()?;
+    println!("[Sequencer] Starting HTTPS server at {}", axum_addr);
+    let axum_app = Router::new()
         .route("/enroll", post(enroll_handler))
         .with_state(state.clone());
-        
-    println!("[Sequencer] Starting HTTPS server at {}", http_addr);
-    let http_srv = axum_server::bind_rustls(http_addr, tls_config)
-        .serve(http_app.into_make_service());
 
-    /* ---------- gRPC server ---------- */
-    // let grpc_addr = "0.0.0.0:50051".parse()?;
+    let http_srv = axum_server::bind_rustls(axum_addr, public_tls)
+        .serve(axum_app.into_make_service());
+
+
+    // --------------------------------------------------------------
+    //  start gRPC (private) on 0.0.0.0:50051 with mTLS
+    // --------------------------------------------------------------
     let grpc_addr: SocketAddr = cfg.grpc_listen.parse()?;
-    
     println!("[Sequencer] Starting gRPC server at {}", grpc_addr);
     let grpc_srv = tonic::transport::Server::builder()
+        .tls_config(mtls)?                 // << the mTLS config
         .add_service(make_server(state))
         .serve(grpc_addr);
 
-    tokio::join!(http_srv, grpc_srv);
+
+    // --------------------------------------------------------------
+    //  Start server and propagate errors
+    // --------------------------------------------------------------
+    println!("[Sequencer] Starting servers…");
+    let (http_res, grpc_res) = tokio::join!(http_srv, grpc_srv);
+
+    http_res  
+    .context("HTTPS server terminated unexpectedly")?;
+
+    grpc_res
+        .context("gRPC server terminated unexpectedly")?;
+
     Ok(())
 }

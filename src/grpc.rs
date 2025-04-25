@@ -12,7 +12,8 @@ pub struct IngestSvc { pub state: SequencerAppState }
 
 #[tonic::async_trait]
 impl IngestService for IngestSvc {
-    async fn ingest(
+    
+	async fn ingest(
         &self,
         req: Request<TxRequest>,
     ) -> Result<Response<IngestResponse>, Status> {

@@ -3,17 +3,17 @@ syntax = "proto3";
 package eatsimple_blockchain;
 
 service IngestService {
-  rpc Ingest (TxRequest) returns (IngestResponse);
+	rpc Ingest (TxRequest) returns (IngestResponse);
 }
 
 message TxRequest {
-  string node_uuid   = 1;
-  int64  timestamp   = 2;
-  bytes  payload     = 3;
-  bytes  signature   = 4;
+	string node_uuid   = 1;   	// UUID assigned in enrollment
+	int64  timestamp   = 2;   	// Unix-epoch milliseconds
+	bytes  payload     = 3;   	// opaque application data
+	bytes  signature   = 4;   	// Ed25519 sig over (node_uuid || timestamp || payload)
 }
 
 message IngestResponse {
-  bool   ok         = 1;
-  string message    = 2;
+	bool   ok         = 1;
+	string message    = 2;		// “queued”, “bad-sig”, etc.
 }
