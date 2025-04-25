@@ -12,8 +12,10 @@ pub struct SequencerConfig {
     pub mode: String,                       // should be "sequencer"
     pub listen: String,                     // ex 0.0.0.0:8443
     pub grpc_listen: String,                // ex 0.0.0.0:50051
-    pub server_cert: String,                // "/etc/eatsimple/seq.crt"
-    pub server_key: String,                 // "/etc/eatsimple/seq.key"
+    pub https_cert: String,                 // "/etc/eatsimple/origin.crt"
+    pub https_key: String,                  // "/etc/eatsimple/origin.key"
+    pub grpc_cert: String,                  // "/etc/eatsimple/seq.crt"
+    pub grpc_key: String,                   // "/etc/eatsimple/seq.key"
     pub ca_root: String,                    // "/etc/eatsimple/ca.pem"
     pub ca_key:  String,                    // path to CA private key (PEM)
     pub rocksdb_path: String,               // "/var/lib/mychain/blocks"

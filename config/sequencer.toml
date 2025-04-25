@@ -1,11 +1,12 @@
 mode                = "sequencer"
 listen              = "0.0.0.0:8443"
 grpc_listen         = "0.0.0.0:50051"
-server_cert         = "/etc/eatsimple/seq.crt"
-server_key          = "/etc/eatsimple/seq.key"
+https_cert          = "/etc/eatsimple/origin.crt"
+https_key           = "/etc/eatsimple/origin.key"
+grpc_cert           = "/etc/eatsimple/seq.crt"
+grpc_key            = "/etc/eatsimple/seq.key"
 ca_root             = "/etc/eatsimple/ca.pem"
 ca_key              = "/etc/eatsimple/ca.key" 
-
 rocksdb_path        = "/var/lib/mychain/blocks"
 max_block_entries   = 100        # close the block after 100 entires OR
 max_block_age_ms    = 3000       # or close the block after 30 seconds

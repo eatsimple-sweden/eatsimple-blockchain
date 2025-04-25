@@ -30,8 +30,8 @@ pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
     //  Build a config WITHOUT client-auth for HTTPS
     // --------------------------------------------------------------
     let public_tls = {
-        let certs:  Vec<Certificate> = load_certs(&cfg.server_cert)?;
-        let key:    PrivateKey       = load_key(&cfg.server_key)?;
+        let certs:  Vec<Certificate> = load_certs(&cfg.https_cert)?;
+        let key:    PrivateKey       = load_key(&cfg.https_key)?;
     
         let scfg = RustlsServerConfig::builder()
             .with_safe_defaults()
@@ -42,12 +42,12 @@ pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
         RustlsConfig::from_config(Arc::new(scfg))
     };
     
-    
+
     // --------------------------------------------------------------
     //  Build a config WITH client-auth for gRPC
     // --------------------------------------------------------------
-    let cert_pem = std::fs::read_to_string(&cfg.server_cert)?;
-    let key_pem  = std::fs::read_to_string(&cfg.server_key)?;
+    let cert_pem = std::fs::read_to_string(&cfg.grpc_cert)?;
+    let key_pem  = std::fs::read_to_string(&cfg.grpc_key)?;
     let ca_pem   = std::fs::read_to_string(&cfg.ca_root)?;
 
     let server_identity = Identity::from_pem(cert_pem, key_pem);
