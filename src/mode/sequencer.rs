@@ -94,7 +94,7 @@ pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
     let (http_res, grpc_res) = tokio::join!(http_srv, grpc_srv);
 
     http_res  
-    .context("HTTPS server terminated unexpectedly")?;
+        .context("HTTPS server terminated unexpectedly")?;
 
     grpc_res
         .context("gRPC server terminated unexpectedly")?;

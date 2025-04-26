@@ -2,8 +2,14 @@ syntax = "proto3";
 
 package eatsimple_blockchain;
 
+// writer → sequencer
 service IngestService {
 	rpc Ingest (TxRequest) returns (IngestResponse);
+}
+
+// sequencer → witness
+service WitnessService {
+	rpc Propose (BlockProposal) returns (ProposeResponse);
 }
 
 message TxRequest {
@@ -16,4 +22,24 @@ message TxRequest {
 message IngestResponse {
 	bool   ok         = 1;
 	string message    = 2;		// “queued”, “bad-sig”, etc.
+}
+
+message BlockProposal {
+	BlockHeader 	header 		= 1;
+	bytes        	signature 	= 2;
+}
+  
+message ProposeResponse {
+	bool    ok         = 1;
+	string  error      = 2;   // empty if ok
+	bytes   signature  = 3;   // Ed25519 signature from the witness
+	string  node_uuid  = 4;   // which witness signed
+}
+  
+message BlockHeader {
+	uint64 	height        = 1;
+	bytes  	prev_hash     = 2;
+	bytes  	merkle_root   = 3;
+	int64  	timestamp_ms  = 4;
+	uint32 	entries       = 5;
 }

@@ -1,5 +1,5 @@
 mode                = "sequencer"
-listen              = "0.0.0.0:8443"
+listen              = "0.0.0.0:443"
 grpc_listen         = "0.0.0.0:50051"
 https_cert          = "/etc/eatsimple/origin.crt"
 https_key           = "/etc/eatsimple/origin.key"
@@ -17,3 +17,4 @@ witness_endpoints   = [
     "https://witness1.local/cosign",
     "https://witness2.local/cosign"
 ]
+sequencer_node_uuid = "28c2f187-f227-4fba-9adf-05a90a630fc5"
