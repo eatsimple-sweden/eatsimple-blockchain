@@ -8,7 +8,7 @@ use std::{
     io::BufReader,
 };
 
-// reads a cert file and gives back all x509 certs in it (PEM → rustls::Certificate)
+// reads a cert file and gives back all x509 certs in it (PEM -> rustls::Certificate)
 pub fn load_certs(path: &str) -> Result<Vec<Certificate>> {
     // open the cert file and buffer it
     let file = File::open(path)

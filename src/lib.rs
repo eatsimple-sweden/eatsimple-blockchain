@@ -9,5 +9,7 @@ pub mod outbox;         // Postgres outbox helper
 pub mod storage;        // RocksDB or sled adapters
 pub mod utils;          // misc helpers (timestamps, errors, logging)
 pub mod mode;           // per‑mode orchestration logic
+
+#[cfg(feature = "sequencer")]
 pub mod batch;          // collecting incoming transactions, batching/merkle roots/gRPC, persistance etc
 pub mod handlers;       // handlers for Axum API

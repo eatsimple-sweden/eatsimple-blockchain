@@ -2,7 +2,10 @@ use crate::pb::{
     TxRequest,
 };
 
-use serde::Deserialize;
+use serde::{
+    Deserialize,
+    de::DeserializeOwned,
+};
 use std::fs;
 use anyhow::{Context, Result};
 use tokio::sync::mpsc::Sender;
@@ -13,12 +16,12 @@ pub struct SequencerConfig {
     pub listen: String,                     // ex 0.0.0.0:8443
     pub grpc_listen: String,                // ex 0.0.0.0:50051
 
-    pub https_cert: String,                 // "/etc/eatsimple/origin.crt"
-    pub https_key: String,                  // "/etc/eatsimple/origin.key"
-    pub grpc_cert: String,                  // "/etc/eatsimple/seq.crt"
-    pub grpc_key: String,                   // "/etc/eatsimple/seq.key"
+    pub https_cert: String,                 // "/etc/mychain/origin.crt"
+    pub https_key: String,                  // "/etc/mychain/origin.key"
+    pub grpc_cert: String,                  // "/etc/mychain/seq.crt"
+    pub grpc_key: String,                   // "/etc/mychain/seq.key"
 
-    pub ca_root: String,                    // "/etc/eatsimple/ca.pem"
+    pub ca_root: String,                    // "/etc/mychain/ca.pem"
     pub ca_key:  String,                    // path to CA private key (PEM)
     pub rocksdb_path: String,               // "/var/lib/mychain/blocks"
     pub max_block_entries: usize,           // ex 100
@@ -30,21 +33,36 @@ pub struct SequencerConfig {
     pub sequencer_node_uuid: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub struct ContributorConfig {
+    pub sequencer_http_domain: String,          // "mydomain.com"
+    pub sequencer_grpc_domain: String,          // "grpc.mydomain.com"
+    pub max_retry_ms: u64,
+    pub state_dir: String,
+}
+
 #[derive(Clone)]
 pub struct SequencerAppState { // idiomatic pattern to merge multiple shared contexts here
     pub cfg:        SequencerConfig,
     pub tx_ingest:  Sender<TxRequest>,
 }
 
+pub fn load_toml<T: DeserializeOwned>(path: &str) -> Result<T> {
+    let s = fs::read_to_string(path)
+        .with_context(|| format!("reading config file `{}`", path))?;
+    toml::from_str(&s)
+        .with_context(|| format!("parsing `{}` as TOML", path))
+}
+
 impl SequencerConfig {
     pub fn load(path: &str) -> Result<Self> {
-        let s = fs::read_to_string(path)
-            .with_context(|| format!("reading config file `{}`", path))?;
-        let cfg: SequencerConfig = toml::from_str(&s)
-            .with_context(|| format!("parsing `{}` as TOML", path))?;
-        
-        //  could validate here - assert!(cfg.mode == "sequencer")
-        Ok(cfg)
+        load_toml(path)
+    }
+}
+
+impl ContributorConfig {
+    pub fn load(path: &str) -> Result<Self> {
+        load_toml(path)
     }
 }
 

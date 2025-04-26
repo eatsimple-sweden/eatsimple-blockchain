@@ -1,5 +1,5 @@
 use crate::{
-    block::{Pending, merkle_root, hash_header, Block, BlockHeader},
+    block::{merkle_root, hash_header, Block, BlockHeader},
     config::SequencerConfig,
     pb::{
         TxRequest,
@@ -9,190 +9,152 @@ use crate::{
     },
 };
 use anyhow::{Result, Context};
-use chrono::Utc;
-use tokio::{sync::mpsc::Receiver, time::{self, Duration, Instant}};
-use std::time::Instant as StdInstant;
-use openssl::{
-    pkey::PKey,
-    sign::Signer,
+use std::{
+    sync::{Arc},
+    collections::BTreeMap,
 };
 use tonic::Request;
 use futures::{
     stream::FuturesUnordered,
     StreamExt,
 };
+use tokio::{
+    sync::{mpsc, mpsc::Receiver},
+    time::{self, Duration, Instant},
+};
+use openssl::{
+    pkey::PKey,
+    sign::Signer,
+};
 
 // frequency we check the buffer for flush conditions
 const TICK_MS: u64 = 50;
 
 pub async fn batch_loop(
-    cfg:        SequencerConfig, 
-    mut rx:     Receiver<TxRequest>
-) -> Result<()> {
-    // buffer for the block we are currently building
-    let mut building: Option<(
-        Vec<TxRequest>,     // transactions
-        Instant,            // started time
-        u64,                // height
-        [u8;32]             // prev_hash
-    )> = None;
-    
-    let mut proposed_blocks: Vec<Pending> = Vec::new(); // keep proposed blocks around until their sigs collected
+    cfg: SequencerConfig,
+    mut rx: Receiver<TxRequest>,
+) -> anyhow::Result<()> {
+    let cfg = Arc::new(cfg); // shared – cheap to clone
 
-    // helper function to check if we should flush
-    let should_flush = |txs: &[TxRequest], start: Instant| -> bool {
-        txs.len() >= cfg.max_block_entries ||
-        start.elapsed().as_millis() as u64 >= cfg.max_block_age_ms
+    // ----------------------------------------------------------
+    //  live “tip” of the chain (already committed)
+    //  (-> load from DB on real startup)
+    // ----------------------------------------------------------
+    let mut next_height: u64      = 0;
+    let mut prev_hash:   [u8; 32] = [0; 32];
+
+    // ----------------------------------------------------------
+    //  current building buffer
+    // ----------------------------------------------------------
+    let mut buffer:     Vec<TxRequest> = Vec::new();
+    let mut started_at: Instant        = Instant::now();
+
+    // ----------------------------------------------------------
+    //  finished proposal tasks report here
+    // ----------------------------------------------------------
+    let (seal_tx, mut seal_rx) = mpsc::channel::<Sealed>(32);
+
+    // ----------------------------------------------------------
+    //  commit buffer – keeps Sealed blocks that arrived early
+    // ----------------------------------------------------------
+    let mut commit_q: BTreeMap<u64, Sealed> = BTreeMap::new();
+
+    let should_flush = |buf: &[TxRequest], start: Instant, cfg: &SequencerConfig| {
+        !buf.is_empty() && (                       // never flush an empty buffer
+            buf.len() >= cfg.max_block_entries ||
+            start.elapsed().as_millis() as u64 >= cfg.max_block_age_ms
+        )
     };
 
     loop {
         tokio::select! {
-            // --------------------------------------------------------------
-            //  Handling incoming tx
-            // --------------------------------------------------------------
-            Some(tx) = rx.recv() => {
-                // ensure we have a building buffer
-                let (txs, start, height, prev_hash) = building
-                    .get_or_insert_with(|| (Vec::new(), Instant::now(), 0 /* TODO DB */, [0u8;32] /* TODO DB */));
-                
-                txs.push(tx);
-
-                if should_flush(txs, *start) {
-                    let (txs_to_flush, started, height, prev_hash) = building.take().unwrap();
-                    let new_pending = build_and_broadcast(
-                        txs_to_flush, started, height, prev_hash, cfg.clone()
-                    ).await?;
-                    proposed_blocks.push(new_pending);
-
-                    // start new batch immediately
-                    let prev_hdr = match proposed_blocks.last().unwrap() {
-                        crate::block::Pending::Proposed { block, .. } => &block.header,
-                        _ => unreachable!(),
-                    };
-                    building = Some((
-                        Vec::new(),
-                        Instant::now(),
-                        height + 1,
-                        hash_previous_root(prev_hdr),
-                    ));
-                }
+            Some(tx) = rx.recv() => {                               // ingest task passed us a new Tx
+                buffer.push(tx);
             }
 
-            // --------------------------------------------------------------
-            //  Periodic check of the building buffer
-            // --------------------------------------------------------------
-            _ = time::sleep(Duration::from_millis(TICK_MS)) => {
-                if let Some((txs, start, height, prev_hash)) = &mut building {
-                    if should_flush(txs, *start) {
-                        let (txs_to_flush, started, height, prev_hash) = building.take().unwrap();
-                        let new_pending = build_and_broadcast(
-                            txs_to_flush, started, height, prev_hash, cfg.clone()
-                        ).await?;
-                        proposed_blocks.push(new_pending);
+            _ = time::sleep(Duration::from_millis(TICK_MS)) => {}   // periodic tick – just falls through to flush check
 
-                        let prev_hdr = match proposed_blocks.last().unwrap() {
-                            crate::block::Pending::Proposed { block, .. } => &block.header,
-                            _ => unreachable!(),
-                        };
-                        building = Some((
-                            Vec::new(),
-                            Instant::now(),
-                            height + 1,
-                            hash_previous_root(prev_hdr),
-                        ));
+            Some(sealed) = seal_rx.recv() => {                      // a proposal task finished (may be *any* height)
+                let h = sealed.block.header.height;
+                commit_q.insert(h, sealed);
+
+                while let Some(sealed) = commit_q.remove(&(next_height + 1)) { // while a proposal task is running, no other task will ever be started for the same height
+                    persist_block(&sealed).await?;
+                    next_height += 1;
+                    prev_hash    = hash_header(&sealed.block.header);
+                }
+            }
+        }
+
+        if should_flush(&buffer, started_at, &cfg) { // decide whether to flush current buffer
+            let txs   = std::mem::take(&mut buffer);
+            let h_cur = next_height + 1;
+            let p_hash = prev_hash;
+            let cfg_cloned = cfg.clone();
+            let seal_tx_cloned = seal_tx.clone();
+
+            tokio::spawn(async move {
+                if let Ok((block, my_sig)) = make_local_header(txs, h_cur, p_hash, &cfg_cloned) {
+                    if let Ok(sigs) = collect_witness_sigs(block.header.clone(), my_sig, &cfg_cloned).await {
+                        let _ = seal_tx_cloned.send(Sealed { block, sigs }).await;
+                    } else {
+                        tracing::warn!(height = h_cur, "quorum not reached – block dropped");
                     }
                 }
-            }
+            });
+
+            started_at = Instant::now();
         }
     }
 }
 
-// --------------------------------------------------------------
-//  Turn buffered txs into a `Block`, sign it, broadcast ONLY header to witnesses
-// --------------------------------------------------------------
-async fn build_and_broadcast(
-    txs:        Vec<TxRequest>,
-    started:    Instant,
-    height:     u64,            // TODO
-    prev_hash:  [u8; 32],       // TODO
-    cfg:        SequencerConfig,
-) -> Result<Pending> {
-
-    // build header
-    let (root, _leaves) = merkle_root(&txs);
+// Build header and our own sig – synchronous + fast
+fn make_local_header(
+    txs: Vec<TxRequest>,
+    height: u64,
+    prev_hash: [u8; 32],
+    cfg: &SequencerConfig,
+) -> anyhow::Result<(Block, Vec<u8>)> {
+    let (root, _) = merkle_root(&txs);
     let header = BlockHeader {
         height,
         prev_hash,
-        merkle_root:    root,
-        timestamp_ms:   Utc::now().timestamp_millis(),
-        entries:        txs.len() as u32,
+        merkle_root: root,
+        timestamp_ms: chrono::Utc::now().timestamp_millis(),
+        entries: txs.len() as u32,
     };
-    let block = Block { header: header.clone(), txs };
+    let block  = Block { header: header.clone(), txs };
+    let my_sig = sign_with_node_key(&hash_header(&header), cfg)?;
+    Ok((block, my_sig))
+}
 
-    // sequencer’s own signature over header hash
-    let hdr_hash = hash_header(&block.header);
-    let my_sig   = sign_with_node_key(&hdr_hash, &cfg)?; 
+async fn collect_witness_sigs(
+    header: BlockHeader,
+    my_sig: Vec<u8>,
+    cfg: &SequencerConfig,
+) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
 
-    // --------------------------------------------------------------
-    //  collect all witness‐propose futures
-    // --------------------------------------------------------------
     let mut futs = FuturesUnordered::new();
-    for url in &cfg.witness_endpoints {
+    for ep in &cfg.witness_endpoints {
         let hdr = header.clone();
         let sig = my_sig.clone();
-        let url = url.clone();
-        futs.push(async move {
-            send_proposal(url, hdr, sig).await // returns the witness’s signature on success
-        });
+        let ep  = ep.clone();
+        futs.push(send_proposal(ep, hdr, sig));
     }
 
-    // --------------------------------------------------------------
-    //  gather responses until threshold, starting with the sequencers
-    // --------------------------------------------------------------
-    let mut gathered: Vec<(String, Vec<u8>)> = vec![(cfg.sequencer_node_uuid.clone(), my_sig.clone())];
-
+    let mut gathered = vec![(cfg.sequencer_node_uuid.clone(), my_sig)];
     while let Some(res) = futs.next().await {
         match res {
-            Ok((w_uuid, w_sig)) => {
-                gathered.push((w_uuid, w_sig));
+            Ok((uuid, sig)) => {
+                gathered.push((uuid, sig));
                 if gathered.len() >= cfg.witness_threshold + 1 {
-                    break;
+                    return Ok(gathered);
                 }
             }
-            Err(e) => tracing::warn!("witness proposal failed: {}", e),
+            Err(e) => tracing::warn!("witness RPC failed: {e}"),
         }
     }
-
-    // --------------------------------------------------------------
-    //  seal the block
-    // --------------------------------------------------------------
-    Ok(Pending::Confirmed {
-        block,
-        sigs: vec![my_sig],
-        confirmed_at: StdInstant::now(),
-    })
-}
-
-fn sign_with_node_key(msg: &[u8], cfg: &SequencerConfig) -> Result<Vec<u8>> {
-    // load Ed25519 private key (PEM) from disk
-    let key_pem = std::fs::read(&cfg.grpc_key)
-        .context("reading node private key for signing")?;
-    let pkey = PKey::private_key_from_pem(&key_pem)
-        .context("parsing node private key PEM")?;
-
-    // for Ed25519: create a no-digest signer
-    let mut signer =
-        Signer::new_without_digest(&pkey).context("creating Ed25519 signer")?;
-    signer.update(msg).context("feeding message to signer")?;
-    let sig = signer
-        .sign_to_vec()
-        .context("finalising Ed25519 signature")?;
-    Ok(sig)
-}
-
-fn hash_previous_root(header: &BlockHeader) -> [u8; 32] {
-    // stub: in real code, hash the header to get prev_hash for next block
-    hash_header(header)
+    anyhow::bail!("quorum not reached")
 }
 
 // --------------------------------------------------------------
@@ -223,4 +185,34 @@ pub async fn send_proposal(
     }
 
     Ok((resp.node_uuid, resp.signature))
+}
+
+async fn persist_block(sealed: &Sealed) -> anyhow::Result<()> {
+    // TODO write to RocksDB / sled
+    // TODO notify any subscribers / emit event
+    // TODO anchor
+    Ok(())
+}
+
+fn sign_with_node_key(msg: &[u8], cfg: &SequencerConfig) -> Result<Vec<u8>> {
+    // load Ed25519 private key (PEM) from disk
+    let key_pem = std::fs::read(&cfg.grpc_key)
+        .context("reading node private key for signing")?;
+    let pkey = PKey::private_key_from_pem(&key_pem)
+        .context("parsing node private key PEM")?;
+
+    // for Ed25519 create a no-digest signer
+    let mut signer =
+        Signer::new_without_digest(&pkey).context("creating Ed25519 signer")?;
+    signer.update(msg).context("feeding message to signer")?;
+    let sig = signer
+        .sign_to_vec()
+        .context("finalising Ed25519 signature")?;
+    Ok(sig)
+}
+
+// what comes back from a proposal-task once it reaches quorum
+struct Sealed {
+    block: Block,                    // header + txs
+    sigs:  Vec<(String, Vec<u8>)>,   // who signed what
 }

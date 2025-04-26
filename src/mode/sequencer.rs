@@ -5,7 +5,7 @@ use crate::{
     pb::{TxRequest},
     handlers::enroll::enroll_handler,
     utils::{
-        load_certs, load_key, load_ca,
+        load_certs, load_key,
     },
 };
 

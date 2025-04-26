@@ -1,4 +1,11 @@
+#[cfg(feature = "sequencer")]
 pub mod sequencer;
+
+#[cfg(feature = "witness")]
 pub mod witness;
+
+#[cfg(feature = "writer")]
 pub mod writer;
-pub mod writer_witness;
+
+#[cfg(feature = "contributor")]
+pub mod contributor;

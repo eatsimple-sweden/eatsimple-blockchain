@@ -8,12 +8,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 use base64::prelude::*;
-use openssl::x509::{X509, X509Builder, X509NameBuilder};
-use openssl::pkey::PKey;
-use openssl::asn1::Asn1Time;
-use openssl::hash::MessageDigest;
 use std::convert::TryFrom;
 
+#[cfg(feature = "sequencer")]
+use openssl::{
+    x509::{X509, X509Builder, X509NameBuilder},
+    pkey::PKey,
+    asn1::Asn1Time,
+    hash::MessageDigest,
+};
+
+#[cfg(feature = "sequencer")]
 fn to_http_err<E: std::fmt::Display>(e: E) -> (StatusCode, Json<Value>) {
     (StatusCode::INTERNAL_SERVER_ERROR,
      Json(json!({ "error": e.to_string() })))
@@ -41,9 +46,11 @@ pub struct NodeConfig {
     pub expires_at:  i64,               // unix epoch secs
 }
 
+#[cfg(feature = "sequencer")]
 type EnrollResult = 
     Result<(StatusCode, Json<EnrollResp>), (StatusCode, Json<Value>)>;
 
+#[cfg(feature = "sequencer")]
 pub async fn enroll_handler(
     State(state): State<SequencerAppState>,
     Json(req): Json<EnrollReq>,

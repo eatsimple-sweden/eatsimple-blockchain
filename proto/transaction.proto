@@ -2,12 +2,12 @@ syntax = "proto3";
 
 package eatsimple_blockchain;
 
-// writer → sequencer
+// writer -> sequencer
 service IngestService {
 	rpc Ingest (TxRequest) returns (IngestResponse);
 }
 
-// sequencer → witness
+// sequencer -> witness
 service WitnessService {
 	rpc Propose (BlockProposal) returns (ProposeResponse);
 }
