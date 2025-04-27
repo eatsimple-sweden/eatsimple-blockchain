@@ -75,7 +75,8 @@ pub async fn enroll_handler(
 
     let pubkey = PKey::public_key_from_der(&pubkey_der).map_err(to_http_err)?;
     builder.set_pubkey(&pubkey).map_err(to_http_err)?;
-    builder.sign(&ca_key, MessageDigest::sha256()).map_err(to_http_err)?;
+    // builder.sign(&ca_key, MessageDigest::sha256()).map_err(to_http_err)?;
+    builder.sign(&ca_key, MessageDigest::null()).map_err(to_http_err)?;
 
     let node_cert_pem = builder.build().to_pem().map_err(to_http_err)?;
     let node_cert_str = String::from_utf8(node_cert_pem)
