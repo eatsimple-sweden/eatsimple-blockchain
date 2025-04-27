@@ -1,16 +1,14 @@
 use crate::config::{SequencerAppState};
+use super::models::{EnrollReq, EnrollResp, NodeConfig};
 
 use axum::{
     extract::{State, Json},
     http::StatusCode,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use uuid::Uuid;
 use base64::prelude::*;
 use std::convert::TryFrom;
-
-#[cfg(feature = "sequencer")]
 use openssl::{
     x509::{X509, X509Builder, X509NameBuilder},
     pkey::PKey,
@@ -18,39 +16,14 @@ use openssl::{
     hash::MessageDigest,
 };
 
-#[cfg(feature = "sequencer")]
 fn to_http_err<E: std::fmt::Display>(e: E) -> (StatusCode, Json<Value>) {
     (StatusCode::INTERNAL_SERVER_ERROR,
      Json(json!({ "error": e.to_string() })))
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct EnrollReq {
-    pub enroll_jwt: String,
-    pub pubkey:     String,             // base64
-    pub hw_id:      Option<String>,
-}
-
-// JSON we send back
-#[derive(Serialize, Deserialize)]
-pub struct EnrollResp {
-    pub cert_pem:    String,
-    pub ca_pem:      String,
-    pub node_config: NodeConfig,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct NodeConfig {
-    pub uuid: String,
-    pub role_flag: String,              // "writer" | "witness" | "both"
-    pub expires_at:  i64,               // unix epoch secs
-}
-
-#[cfg(feature = "sequencer")]
 type EnrollResult = 
     Result<(StatusCode, Json<EnrollResp>), (StatusCode, Json<Value>)>;
 
-#[cfg(feature = "sequencer")]
 pub async fn enroll_handler(
     State(state): State<SequencerAppState>,
     Json(req): Json<EnrollReq>,
@@ -61,9 +34,7 @@ pub async fn enroll_handler(
 
     // TODO, REPLACE
     let node_uuid = Uuid::new_v4().to_string();
-    let role_flag = "writer".to_string();
-
-
+    let role_flag = "contributor".to_string();
 
     let pubkey_der = match BASE64_STANDARD.decode(&req.pubkey) {
         Ok(bytes) => bytes,

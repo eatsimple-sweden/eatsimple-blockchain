@@ -1,6 +1,6 @@
 use crate::{
     config::{ContributorConfig},
-    handlers::enroll::{EnrollReq, EnrollResp, NodeConfig},
+    handlers::enroll::models::{EnrollReq, EnrollResp, NodeConfig},
 };
 
 use anyhow::{Context, Result};

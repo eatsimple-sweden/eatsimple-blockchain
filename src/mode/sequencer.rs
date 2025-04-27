@@ -3,7 +3,7 @@ use crate::{
     config::{SequencerConfig, SequencerAppState},
     grpc::{make_server},
     pb::{TxRequest},
-    handlers::enroll::enroll_handler,
+    handlers::enroll::src::enroll_handler,
     utils::{
         load_certs, load_key,
     },
