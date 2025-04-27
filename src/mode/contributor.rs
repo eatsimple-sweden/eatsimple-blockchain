@@ -73,7 +73,17 @@ pub async fn run(cfg: ContributorConfig) -> anyhow::Result<()> {
         (sk, pk)
     };
 
-    let pub_key_b64 = base64::engine::general_purpose::STANDARD.encode(&pub_bytes);
+    let mut spki_der = Vec::with_capacity(43);
+    spki_der.extend_from_slice(&[
+        0x30, 0x2a,
+        0x30, 0x05,
+            0x06, 0x03, 0x2b, 0x65, 0x70,
+        0x03, 0x21, 0x00,
+    ]);
+    spki_der.extend_from_slice(&pub_bytes);
+
+    let pub_key_b64 = base64::engine::general_purpose::STANDARD
+        .encode(&spki_der);
 
     // ------------------------------------------------------------------
     // enrol with sequencer
