@@ -20,8 +20,19 @@ use tokio::fs as async_fs;
 fn file(p: &Path, name: &str) -> PathBuf { p.join(name) }
 
 pub async fn run(cfg: ContributorConfig) -> anyhow::Result<()> {
-    let dir = Path::new(&cfg.state_dir);
-    fs::create_dir_all(dir).context("creating state_dir")?;
+    let dir: PathBuf = {
+        let p = Path::new(&cfg.state_dir);
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+            manifest_dir.join(p)
+        }
+    };
+    
+    fs::create_dir_all(&dir)
+        .with_context(|| format!("creating state_dir `{}`", dir.display()))?;
+    println!("[Contributor] using state_dir: {}", dir.display());
 
     // ------------------------------------------------------------------
     // check if we already have every artefact -> nothing to do
