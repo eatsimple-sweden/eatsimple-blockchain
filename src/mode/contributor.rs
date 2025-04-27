@@ -101,36 +101,41 @@ pub async fn run(cfg: ContributorConfig) -> anyhow::Result<()> {
         .build()?;
 
     let url = format!("https://{}/enroll", cfg.sequencer_http_domain);
-    // let resp: EnrollResp = client
-    //     .post(url)
-    //     .json(&req)
-    //     .send()
-    //     .await
-    //     .context("HTTP POST /enroll")?
-    //     .json()
-    //     .await
-    //     .context("decoding /enroll response")?;
-    let request_json = serde_json::to_string(&req)
-        .context("serializing enroll request")?;
-    println!("-> POST {}  body:\n{}", url, request_json);
-
-    let response = client
-        .post(&url)
-        .header("content-type", "application/json")
-        .body(request_json)
+    let resp: EnrollResp = client
+        .post(url)
+        .json(&req)
         .send()
         .await
-        .context("HTTP POST /enroll failed")?;
-
-    let status = response.status();
-    let text = response
-        .text()
+        .context("HTTP POST /enroll")?
+        .json()
         .await
-        .context("reading enroll response text")?;
-    println!("← {}  response body:\n{}", status, text);
+        .context("decoding /enroll response")?;
 
-    let resp: EnrollResp = serde_json::from_str(&text)
-        .context("decoding /enroll response into EnrollResp")?;
+
+
+    // let request_json = serde_json::to_string(&req)
+    //     .context("serializing enroll request")?;
+    // println!("-> POST {}  body:\n{}", url, request_json);
+
+    // let response = client
+    //     .post(&url)
+    //     .header("content-type", "application/json")
+    //     .body(request_json)
+    //     .send()
+    //     .await
+    //     .context("HTTP POST /enroll failed")?;
+
+    // let status = response.status();
+    // let text = response
+    //     .text()
+    //     .await
+    //     .context("reading enroll response text")?;
+    // println!("← {}  response body:\n{}", status, text);
+
+    // let resp: EnrollResp = serde_json::from_str(&text)
+    //     .context("decoding /enroll response into EnrollResp")?;
+
+
 
 
     // ------------------------------------------------------------------
