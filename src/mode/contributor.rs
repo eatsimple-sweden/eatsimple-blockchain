@@ -39,7 +39,7 @@ pub async fn run(cfg: ContributorConfig) -> anyhow::Result<()> {
     // ------------------------------------------------------------------
     let have_everything = ["node.key", "node.pub", "seq.crt", "ca.pem", "node.json"]
         .into_iter()
-        .all(|f| file(dir, f).exists());
+        .all(|f| file(&dir, f).exists());
 
     if have_everything {
         println!("[Contributor] state already initialised");
@@ -51,23 +51,23 @@ pub async fn run(cfg: ContributorConfig) -> anyhow::Result<()> {
     // ------------------------------------------------------------------
     let mut csprng = OsRng;
 
-    let (priv_bytes, pub_bytes) = if !file(dir, "node.key").exists() {
+    let (priv_bytes, pub_bytes) = if !file(&dir, "node.key").exists() {
         let signing_key:   SigningKey   = SigningKey::generate(&mut csprng);
         let verifying_key: VerifyingKey = signing_key.verifying_key();
 
         let sk_bytes = signing_key.to_bytes();           // [u8; 32]
         let pk_bytes = verifying_key.to_bytes();         // [u8; 32]
 
-        fs::write(file(dir, "node.key"), &sk_bytes)
+        fs::write(file(&dir, "node.key"), &sk_bytes)
             .context("writing node.key")?;
-        fs::write(file(dir, "node.pub"), &pk_bytes)
+        fs::write(file(&dir, "node.pub"), &pk_bytes)
             .context("writing node.pub")?;
 
         println!("🔑  generated new key-pair in {:?}", dir);
         (sk_bytes.to_vec(), pk_bytes.to_vec())
     } else {
-        let sk = fs::read(file(dir, "node.key"))?;
-        let pk = fs::read(file(dir, "node.pub"))?;
+        let sk = fs::read(file(&dir, "node.key"))?;
+        let pk = fs::read(file(&dir, "node.pub"))?;
         anyhow::ensure!(sk.len() == SECRET_KEY_LENGTH, "node.key wrong length");
         anyhow::ensure!(pk.len() == PUBLIC_KEY_LENGTH, "node.pub wrong length");
         (sk, pk)
@@ -105,10 +105,10 @@ pub async fn run(cfg: ContributorConfig) -> anyhow::Result<()> {
     // ------------------------------------------------------------------
     // persist the response
     // ------------------------------------------------------------------
-    async_fs::write(file(dir, "seq.crt"), resp.cert_pem).await?;
-    async_fs::write(file(dir, "ca.pem"),  resp.ca_pem).await?;
+    async_fs::write(file(&dir, "seq.crt"), resp.cert_pem).await?;
+    async_fs::write(file(&dir, "ca.pem"),  resp.ca_pem).await?;
     async_fs::write(
-        file(dir, "node.json"),
+        file(&dir, "node.json"),
         serde_json::to_string_pretty(&resp.node_config)?,
     )
     .await?;
