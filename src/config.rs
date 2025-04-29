@@ -9,6 +9,7 @@ use serde::{
 use std::fs;
 use anyhow::{Context, Result};
 use tokio::sync::mpsc::Sender;
+
 #[cfg(feature = "sequencer")]
 use sqlx::PgPool;
 
@@ -62,12 +63,14 @@ pub fn load_toml<T: DeserializeOwned>(path: &str) -> Result<T> {
         .with_context(|| format!("parsing `{}` as TOML", path))
 }
 
+#[cfg(feature = "sequencer")]
 impl SequencerConfig {
     pub fn load(path: &str) -> Result<Self> {
         load_toml(path)
     }
 }
 
+#[cfg(feature = "contributor")]
 impl ContributorConfig {
     pub fn load(path: &str) -> Result<Self> {
         load_toml(path)

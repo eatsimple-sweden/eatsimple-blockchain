@@ -4,9 +4,10 @@ use crate::{
         ingest_service_server::{IngestService, IngestServiceServer},
         TxRequest, IngestResponse,
     },
-    #[cfg(feature = "sequencer")]
-    config::SequencerAppState,
 };
+
+#[cfg(feature = "sequencer")]
+use crate::config::SequencerAppState,
 
 #[cfg(feature = "sequencer")]
 #[derive(Clone)]
