@@ -7,7 +7,7 @@ use base64::{engine::general_purpose::STANDARD as b64, Engine};
 use ed25519_dalek::{SigningKey, VerifyingKey, SECRET_KEY_LENGTH, PUBLIC_KEY_LENGTH};
 use rand::rngs::OsRng;
 use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::{json, Value, Map};
 use std::{
     fs,
     io::{Write, stdout},
@@ -22,6 +22,9 @@ use tokio::{
     task::JoinHandle,
 };
 use once_cell::sync::Lazy;
+use chrono::Utc;
+use futures::StreamExt;
+use tracing::debug;
 
 fn file(p: &Path, name: &str) -> PathBuf {
     p.join(name)
@@ -203,17 +206,47 @@ async fn start_json_server() -> anyhow::Result<()> {
                     continue;
                 }
             };
-            println!("[JSON server] new connection from {}", peer);
+            debug!("[JSON server] new connection from {}", peer);
 
             tokio::spawn(async move {
-                let mut lines = BufReader::new(socket).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    match serde_json::from_str::<Value>(&line) {
-                        Ok(v) => println!("[JSON server] → {:?}", v),
-                        Err(_) => println!("[JSON server] invalid JSON: {}", line.trim()),
+                let mut reader = tokio::io::BufReader::new(socket);
+                let mut buf = String::new();
+
+                loop {
+                    match reader.read_line(&mut buf).await {
+                        Ok(0) => break, // EOF
+                        Ok(_) => {
+                            let line = buf.trim_end();
+                            match serde_json::from_str::<Map<String, Value>>(line) {
+                                Ok(mut obj) => {
+                                    if obj.contains_key("event_type") && obj.len() >= 2 {
+                                        let now_ms = Utc::now().timestamp_millis();
+                                        obj.insert("timestamp".to_string(), Value::Number(now_ms.into()));
+                                        println!("[JSON server] → {:#}", Value::Object(obj));
+                                    } else {
+                                        eprintln!(
+                                            "[JSON server] missing `event_type` or too few fields: {}",
+                                            line
+                                        );
+                                    }
+                                }
+                                Err(err) => {
+                                    eprintln!(
+                                        "[JSON server] invalid JSON: {}  (parse error: {})",
+                                        line, err
+                                    );
+                                }
+                            }
+                            buf.clear();
+                        }
+                        Err(e) => {
+                            eprintln!("[JSON server] read error: {}", e);
+                            break;
+                        }
                     }
                 }
-                println!("[JSON server] connection closed");
+
+                debug!("[JSON server] connection closed");
             });
         }
     });
