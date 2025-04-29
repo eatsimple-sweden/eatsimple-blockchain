@@ -86,10 +86,10 @@ pub async fn run(cfg: ContributorConfig) -> anyhow::Result<()> {
         .encode(&spki_der);
 
     // ------------------------------------------------------------------
-    // enrol with sequencer
+    // enrol with sequencer (EXAMPLE JWT)
     // ------------------------------------------------------------------
     let req = EnrollReq {
-        enroll_jwt: "let-me-in".to_string(),
+        enroll_jwt: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwidXNlcl90eXBlIjoidXNlciIsImV4cCI6MTkxNjIzOTAyMiwicm9sZV9mbGFnIjoiY29udHJpYnV0b3IifQ.1JJfDFVHl_FpQK6yKwi8ZFUwZxmUQGoacXng8CDF-OE".to_string(),
         pubkey: pub_key_b64,
         hw_id: None,
     };
@@ -116,6 +116,8 @@ pub async fn run(cfg: ContributorConfig) -> anyhow::Result<()> {
     // ------------------------------------------------------------------
     async_fs::write(file(&dir, "seq.crt"), resp.cert_pem).await?;
     async_fs::write(file(&dir, "ca.pem"),  resp.ca_pem).await?;
+    async_fs::write(file(&dir, "aes.key"),  resp.aes_key_b64).await?;
+    async_fs::write(file(&dir, "det.key"),  resp.det_key_b64).await?;
     async_fs::write(
         file(&dir, "node.json"),
         serde_json::to_string_pretty(&resp.node_config)?,
