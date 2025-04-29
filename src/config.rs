@@ -9,8 +9,10 @@ use serde::{
 use std::fs;
 use anyhow::{Context, Result};
 use tokio::sync::mpsc::Sender;
+#[cfg(feature = "sequencer")]
 use sqlx::PgPool;
 
+#[cfg(feature = "sequencer")]
 #[derive(Clone, Debug, Deserialize)]
 pub struct SequencerConfig {
     pub mode: String,                       // should be "sequencer"
@@ -36,6 +38,7 @@ pub struct SequencerConfig {
     pub enroll_jwt_secret: String,          // from the main API
 }
 
+#[cfg(feature = "contributor")]
 #[derive(Clone, Debug, Deserialize)]
 pub struct ContributorConfig {
     pub sequencer_http_domain: String,          // "mydomain.com"
@@ -44,6 +47,7 @@ pub struct ContributorConfig {
     pub state_dir: String,
 }
 
+#[cfg(feature = "sequencer")]
 #[derive(Clone)]
 pub struct SequencerAppState { // idiomatic pattern to merge multiple shared contexts here
     pub cfg:        SequencerConfig,
@@ -68,8 +72,4 @@ impl ContributorConfig {
     pub fn load(path: &str) -> Result<Self> {
         load_toml(path)
     }
-}
-
-pub fn load(path: &str) -> Result<SequencerConfig> {
-    SequencerConfig::load(path)
 }
