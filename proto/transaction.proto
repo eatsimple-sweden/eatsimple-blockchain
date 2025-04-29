@@ -13,10 +13,13 @@ service WitnessService {
 }
 
 message TxRequest {
-	string node_uuid   = 1;   	// UUID assigned in enrollment
-	int64  timestamp   = 2;   	// Unix-epoch milliseconds
-	bytes  payload     = 3;   	// opaque application data
-	bytes  signature   = 4;   	// Ed25519 sig over (node_uuid || timestamp || payload)
+	string node_uuid      		= 1;        // who signed
+	int64  timestamp_ms   		= 2;        // writer’s wall-clock
+	bytes  public_json    		= 3;        // UTF-8 JSON
+	bytes  cipher_json    		= 4;        // AES-GCM-256 ciphertext
+	bytes  cipher_hash    		= 5;        // BLAKE3(cipher_json) – 32 B
+	repeated bytes index_tokens = 6;    	// N × 32-byte BLAKE3(det_key || K || V)
+	bytes  signature      		= 7;		// 64-byte Ed25519 over   -   node_uuid || timestamp_ms || public_json || cipher_hash || index_tokens[0]
 }
 
 message IngestResponse {
@@ -28,18 +31,18 @@ message BlockProposal {
 	BlockHeader 	header 		= 1;
 	bytes        	signature 	= 2;
 }
-  
-message ProposeResponse {
-	bool    ok         = 1;
-	string  error      = 2;   // empty if ok
-	bytes   signature  = 3;   // Ed25519 signature from the witness
-	string  node_uuid  = 4;   // which witness signed
-}
-  
+
 message BlockHeader {
 	uint64 	height        = 1;
 	bytes  	prev_hash     = 2;
 	bytes  	merkle_root   = 3;
 	int64  	timestamp_ms  = 4;
 	uint32 	entries       = 5;
+}
+  
+message ProposeResponse {
+	bool    ok         = 1;
+	string  error      = 2;   // empty if ok
+	bytes   signature  = 3;   // Ed25519 signature from the witness
+	string  node_uuid  = 4;   // which witness signed
 }

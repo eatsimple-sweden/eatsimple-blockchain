@@ -9,6 +9,7 @@ use serde::{
 use std::fs;
 use anyhow::{Context, Result};
 use tokio::sync::mpsc::Sender;
+use sqlx::PgPool;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SequencerConfig {
@@ -31,6 +32,8 @@ pub struct SequencerConfig {
     pub witness_threshold: usize,           // ex 2
     pub witness_endpoints: Vec<String>,
     pub sequencer_node_uuid: String,
+    pub database_url: String,
+    pub enroll_jwt_secret: String,          // from the main API
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -44,6 +47,7 @@ pub struct ContributorConfig {
 #[derive(Clone)]
 pub struct SequencerAppState { // idiomatic pattern to merge multiple shared contexts here
     pub cfg:        SequencerConfig,
+    pub db:         PgPool,
     pub tx_ingest:  Sender<TxRequest>,
 }
 
