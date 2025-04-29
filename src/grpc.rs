@@ -7,7 +7,7 @@ use crate::{
 };
 
 #[cfg(feature = "sequencer")]
-use crate::config::SequencerAppState,
+use crate::config::SequencerAppState;
 
 #[cfg(feature = "sequencer")]
 #[derive(Clone)]
