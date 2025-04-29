@@ -503,6 +503,7 @@ dependencies = [
  "ed25519-dalek",
  "futures",
  "jsonwebtoken",
+ "once_cell",
  "openssl",
  "prost",
  "rand",
