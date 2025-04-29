@@ -10,6 +10,10 @@ use std::fs;
 use anyhow::{Context, Result};
 use tokio::sync::mpsc::Sender;
 
+#[cfg(feature = "sequencer")]
+use sqlx::PgPool;
+
+#[cfg(feature = "sequencer")]
 #[derive(Clone, Debug, Deserialize)]
 pub struct SequencerConfig {
     pub mode: String,                       // should be "sequencer"
@@ -31,8 +35,11 @@ pub struct SequencerConfig {
     pub witness_threshold: usize,           // ex 2
     pub witness_endpoints: Vec<String>,
     pub sequencer_node_uuid: String,
+    pub database_url: String,
+    pub enroll_jwt_secret: String,          // from the main API
 }
 
+#[cfg(feature = "contributor")]
 #[derive(Clone, Debug, Deserialize)]
 pub struct ContributorConfig {
     pub sequencer_http_domain: String,          // "mydomain.com"
@@ -41,9 +48,11 @@ pub struct ContributorConfig {
     pub state_dir: String,
 }
 
+#[cfg(feature = "sequencer")]
 #[derive(Clone)]
 pub struct SequencerAppState { // idiomatic pattern to merge multiple shared contexts here
     pub cfg:        SequencerConfig,
+    pub db:         PgPool,
     pub tx_ingest:  Sender<TxRequest>,
 }
 
@@ -54,18 +63,16 @@ pub fn load_toml<T: DeserializeOwned>(path: &str) -> Result<T> {
         .with_context(|| format!("parsing `{}` as TOML", path))
 }
 
+#[cfg(feature = "sequencer")]
 impl SequencerConfig {
     pub fn load(path: &str) -> Result<Self> {
         load_toml(path)
     }
 }
 
+#[cfg(feature = "contributor")]
 impl ContributorConfig {
     pub fn load(path: &str) -> Result<Self> {
         load_toml(path)
     }
-}
-
-pub fn load(path: &str) -> Result<SequencerConfig> {
-    SequencerConfig::load(path)
 }

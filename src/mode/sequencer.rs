@@ -22,6 +22,7 @@ use rustls::{
 };
 use tokio::sync::mpsc;
 use tonic::transport::{ServerTlsConfig, Identity, Certificate as TonicTransportCertificate};
+use sqlx::PgPool;
 
 pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
     println!("[Sequencer] Starting setup...");
@@ -50,6 +51,8 @@ pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
     let key_pem  = std::fs::read_to_string(&cfg.grpc_key)?;
     let ca_pem   = std::fs::read_to_string(&cfg.ca_root)?;
 
+    let db = PgPool::connect(&cfg.database_url).await?;
+
     let server_identity = Identity::from_pem(cert_pem, key_pem);
 
     let client_ca_root = TonicTransportCertificate::from_pem(ca_pem);
@@ -59,7 +62,7 @@ pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
         .client_ca_root(client_ca_root);
 
     let (tx_ingest, rx_ingest) = mpsc::channel::<TxRequest>(10_000);
-    let state = SequencerAppState { cfg: cfg.clone(), tx_ingest };
+    let state = SequencerAppState { cfg: cfg.clone(), db, tx_ingest };
     tokio::spawn(batch_loop(cfg.clone(), rx_ingest));
 
 

@@ -1,5 +1,5 @@
 use crate::config::{SequencerAppState};
-use super::models::{EnrollReq, EnrollResp, NodeConfig};
+use super::models::{EnrollReq, EnrollClaims, EnrollResp, NodeConfig};
 
 use axum::{
     extract::{State, Json},
@@ -7,6 +7,7 @@ use axum::{
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
+use jsonwebtoken::{decode, DecodingKey, Validation};
 use base64::prelude::*;
 use std::convert::TryFrom;
 use openssl::{
@@ -15,26 +16,36 @@ use openssl::{
     asn1::Asn1Time,
     hash::MessageDigest,
 };
+use rand::RngCore;
 
 fn to_http_err<E: std::fmt::Display>(e: E) -> (StatusCode, Json<Value>) {
     (StatusCode::INTERNAL_SERVER_ERROR,
      Json(json!({ "error": e.to_string() })))
 }
 
-type EnrollResult = 
-    Result<(StatusCode, Json<EnrollResp>), (StatusCode, Json<Value>)>;
+type EnrollResult = Result<(StatusCode, Json<EnrollResp>), (StatusCode, Json<Value>)>;
 
 pub async fn enroll_handler(
     State(state): State<SequencerAppState>,
     Json(req): Json<EnrollReq>,
 ) -> EnrollResult {
-    if req.enroll_jwt != "let-me-in" { // stub-verify JWT
-        return Err((StatusCode::UNAUTHORIZED, Json(json!({ "error": "bad jwt" }))));
-    }
+    let token_data = decode::<EnrollClaims>(
+        &req.enroll_jwt,
+        &DecodingKey::from_secret(state.cfg.enroll_jwt_secret.as_ref()),
+        &Validation::default(),
+    ).map_err(|e| {
+        let body = Json(json!({ "error": format!("invalid token: {}", e) }));
+        (StatusCode::UNAUTHORIZED, body)
+    })?;
+    let claims = token_data.claims;
 
-    // TODO, REPLACE
-    let node_uuid = Uuid::new_v4().to_string();
-    let role_flag = "contributor".to_string();
+    let node_uuid = Uuid::new_v4();
+    let mut aes_key = [0u8; 32];
+    let mut det_key = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut aes_key);
+    rand::rngs::OsRng.fill_bytes(&mut det_key);
+    let aes_key_b64 = BASE64_STANDARD.encode(&aes_key);
+    let det_key_b64 = BASE64_STANDARD.encode(&det_key);
 
     let pubkey_der = match BASE64_STANDARD.decode(&req.pubkey) {
         Ok(bytes) => bytes,
@@ -56,7 +67,7 @@ pub async fn enroll_handler(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
 
     let mut name_b = X509NameBuilder::new().unwrap();
-    name_b.append_entry_by_text("CN", &node_uuid).unwrap();
+    name_b.append_entry_by_text("CN", &node_uuid.to_string()).unwrap();
     if let Some(hw) = &req.hw_id {
         name_b.append_entry_by_text("OU", hw).unwrap();
     }
@@ -77,6 +88,26 @@ pub async fn enroll_handler(
     builder.set_pubkey(&pubkey).map_err(to_http_err)?;
     builder.sign(&ca_key, MessageDigest::null()).map_err(to_http_err)?;
 
+    sqlx::query!(
+        r#"
+        INSERT INTO nodes
+          (node_id, user_name, user_type, user_id, hw_id, role_flag,
+           aes_key, det_key, pubkey, created_at, expires_at)
+        VALUES
+          ($1,$2,$3,$4,$5,$6,$7,$8,$9, now(), to_timestamp($10))
+        "#,
+        node_uuid,
+        claims.name,
+        claims.user_type,
+        claims.sub,
+        req.hw_id,
+        claims.role_flag,
+        &aes_key,
+        &det_key,
+        &pubkey_der,
+        (chrono::Utc::now().timestamp() + (state.cfg.enroll_ttl_days*86400) as i64) as i64,
+    ).execute(&state.db).await.map_err(to_http_err)?;
+
     let node_cert_pem = builder.build().to_pem().map_err(to_http_err)?;
     let node_cert_str = String::from_utf8(node_cert_pem)
         .expect("PEM is valid utf8");
@@ -84,9 +115,11 @@ pub async fn enroll_handler(
     let resp = EnrollResp {
         cert_pem:       node_cert_str,
         ca_pem:         String::from_utf8(ca_cert_pem).unwrap(),
+        aes_key_b64,
+        det_key_b64,
         node_config:    NodeConfig {
             uuid:               node_uuid,
-            role_flag:          role_flag,
+            role_flag:          claims.role_flag,
             expires_at:         chrono::Utc::now().timestamp() + (state.cfg.enroll_ttl_days*86400) as i64,
         },
     };

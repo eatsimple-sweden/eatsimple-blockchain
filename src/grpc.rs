@@ -4,12 +4,16 @@ use crate::{
         ingest_service_server::{IngestService, IngestServiceServer},
         TxRequest, IngestResponse,
     },
-    config::SequencerAppState,
 };
 
+#[cfg(feature = "sequencer")]
+use crate::config::SequencerAppState;
+
+#[cfg(feature = "sequencer")]
 #[derive(Clone)]
 pub struct IngestSvc { pub state: SequencerAppState }
 
+#[cfg(feature = "sequencer")]
 #[tonic::async_trait]
 impl IngestService for IngestSvc {
     
@@ -26,6 +30,7 @@ impl IngestService for IngestSvc {
     }
 }
 
+#[cfg(feature = "sequencer")]
 pub fn make_server(state: SequencerAppState) -> IngestServiceServer<IngestSvc> {
     IngestServiceServer::new(IngestSvc { state })
 }
