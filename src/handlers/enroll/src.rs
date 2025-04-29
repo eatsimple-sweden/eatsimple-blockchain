@@ -96,12 +96,12 @@ pub async fn enroll_handler(
         VALUES
           ($1,$2,$3,$4,$5,$6,$7,$8,$9, now(), to_timestamp($10))
         "#,
-        Uuid::parse_str(&node_uuid)?,
+        node_uuid,
         claims.name,
         claims.user_type,
         claims.sub,
         req.hw_id,
-        claims.node_type,
+        claims.role_flag,
         &aes_key,
         &det_key,
         &pubkey_der,
