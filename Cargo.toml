@@ -27,6 +27,7 @@ contributor     = ["ed25519-dalek", "grpc", "sled"]
 grpc            = ["tonic/transport", "tonic/tls-ring", "tonic-build"]
 
 [dependencies]
+aes-gcm = "0.10.3"
 anyhow = "1.0.98"
 axum = "0.8.3"
 axum-server = { version = "0.6.0", features = ["rustls","tls-rustls"] }

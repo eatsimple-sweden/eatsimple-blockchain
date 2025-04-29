@@ -1,10 +1,11 @@
 use crate::{
     config::ContributorConfig,
-    handlers::enroll::models::{EnrollReq, EnrollResp, NodeConfig},
+    handlers::enroll::models::{EnrollReq, EnrollResp},
+    crypto::prepare_tx,
 };
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD as b64, Engine};
-use ed25519_dalek::{SigningKey, VerifyingKey, SECRET_KEY_LENGTH, PUBLIC_KEY_LENGTH};
+use ed25519_dalek::{SigningKey, VerifyingKey};
 use rand::rngs::OsRng;
 use reqwest::Client;
 use serde_json::{json, Value, Map};
@@ -22,8 +23,6 @@ use tokio::{
     task::JoinHandle,
 };
 use once_cell::sync::Lazy;
-use chrono::Utc;
-use futures::StreamExt;
 use tracing::debug;
 
 fn file(p: &Path, name: &str) -> PathBuf {
@@ -57,7 +56,7 @@ pub async fn run(cfg: ContributorConfig) -> Result<()> {
 
     if is_enrolled() {
         println!("[Contributor] state already initialised, ready.");
-        start_json_server().await?;
+        start_json_server(&dir).await?;
     } else {
         println!("[Contributor] not yet enrolled; type `enroll` to get started.");
     }
@@ -103,7 +102,7 @@ pub async fn run(cfg: ContributorConfig) -> Result<()> {
                     } else {
                         println!("[Contributor] enroll succeeded");
                         
-                        start_json_server().await?;
+                        start_json_server(&dir).await?;
                     }
                 }
             }
@@ -186,7 +185,8 @@ async fn do_enroll(cfg: &ContributorConfig, dir: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn start_json_server() -> anyhow::Result<()> {
+async fn start_json_server(dir: &Path) -> anyhow::Result<()> {
+    let dir = dir.to_path_buf();
     let mut guard = JSON_SERVER.lock().await;
     if guard.is_some() {
         return Ok(());
@@ -208,6 +208,7 @@ async fn start_json_server() -> anyhow::Result<()> {
             };
             debug!("[JSON server] new connection from {}", peer);
 
+            let dir = dir.clone(); 
             tokio::spawn(async move {
                 let mut reader = tokio::io::BufReader::new(socket);
                 let mut buf = String::new();
@@ -218,11 +219,14 @@ async fn start_json_server() -> anyhow::Result<()> {
                         Ok(_) => {
                             let line = buf.trim_end();
                             match serde_json::from_str::<Map<String, Value>>(line) {
-                                Ok(mut obj) => {
+                                Ok(obj) => {
                                     if obj.contains_key("event_type") && obj.len() >= 2 {
-                                        let now_ms = Utc::now().timestamp_millis();
-                                        obj.insert("timestamp".to_string(), Value::Number(now_ms.into()));
-                                        println!("[JSON server] → {:#}", Value::Object(obj));
+                                        
+                                        let public_fields = &["event_type", "order_id", "product_id"];
+                                        match prepare_tx(obj, public_fields, &dir) {
+                                            Ok(tx_json) => println!("[JSON server] -> Tx: {:#}", tx_json),
+                                            Err(e)     => eprintln!("[JSON server] prepare_tx error: {:?}", e),
+                                        }
                                     } else {
                                         eprintln!(
                                             "[JSON server] missing `event_type` or too few fields: {}",
