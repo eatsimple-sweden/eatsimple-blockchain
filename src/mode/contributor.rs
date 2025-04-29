@@ -7,18 +7,24 @@ use base64::{engine::general_purpose::STANDARD as b64, Engine};
 use ed25519_dalek::{SigningKey, VerifyingKey, SECRET_KEY_LENGTH, PUBLIC_KEY_LENGTH};
 use rand::rngs::OsRng;
 use reqwest::Client;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::{
     fs,
-    io::{stdin, stdout, Write},
+    io::{Write, stdout},
     path::{Path, PathBuf},
 };
-use tokio::fs as async_fs;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    net::TcpListener,
+    sync::OnceCell,
+    fs as async_fs,
+};
 
 fn file(p: &Path, name: &str) -> PathBuf {
     p.join(name)
 }
+
+static JSON_SERVER_STARTED: OnceCell<()> = OnceCell::const_new();
 
 pub async fn run(cfg: ContributorConfig) -> Result<()> {
     let dir: PathBuf = {
@@ -44,6 +50,7 @@ pub async fn run(cfg: ContributorConfig) -> Result<()> {
 
     if is_enrolled() {
         println!("[Contributor] state already initialised, ready.");
+        start_json_server().await?;
     } else {
         println!("[Contributor] not yet enrolled; type `enroll` to get started.");
     }
@@ -82,10 +89,12 @@ pub async fn run(cfg: ContributorConfig) -> Result<()> {
                 if is_enrolled() {
                     println!("[Contributor] already enrolled");
                 } else {
-                    if let Err(e) = do_enroll(&cfg, &dir).await {
-                        eprintln!("[Contributor] enroll failed: {:?}", e);
-                    } else {
-                        println!("[Contributor] enroll succeeded");
+                    match do_enroll(&cfg, &dir).await {
+                        Ok(()) => {
+                            println!("[Contributor] enroll succeeded");
+                            start_json_server().await?;
+                        }
+                        Err(e) => eprintln!("[Contributor] enroll failed: {:?}", e),
                     }
                 }
             }
@@ -166,4 +175,45 @@ async fn do_enroll(cfg: &ContributorConfig, dir: &Path) -> Result<()> {
 
     println!("[Contributor] enrollment complete; uuid = {}", resp.node_config.uuid);
     Ok(())
+}
+
+async fn start_json_server() -> Result<()> {
+    JSON_SERVER_STARTED
+        .get_or_try_init(|| async {
+            tokio::spawn(async {
+                let listener = TcpListener::bind("127.0.0.1:4000")
+                    .await
+                    .expect("cannot bind JSON server");
+                println!("[JSON server] listening on 127.0.0.1:4000");
+
+                loop {
+                    let (socket, addr) = match listener.accept().await {
+                        Ok(pair) => pair,
+                        Err(e) => {
+                            eprintln!("[JSON server] accept error: {}", e);
+                            continue;
+                        }
+                    };
+                    println!("[JSON server] new connection from {}", addr);
+
+                    tokio::spawn(async move {
+                        let mut rd = BufReader::new(socket);
+                        let mut line = String::new();
+                        while let Ok(n) = rd.read_line(&mut line).await {
+                            if n == 0 { break; }
+                            // try to parse JSON just for demo
+                            match serde_json::from_str::<Value>(&line) {
+                                Ok(v) => println!("[JSON server] → {:?}", v),
+                                Err(_) => println!("[JSON server] (invalid JSON) {}", line.trim()),
+                            }
+                            line.clear();
+                        }
+                        println!("[JSON server] connection closed");
+                    });
+                }
+            });
+            Ok(())
+        })
+        .await
+        .map(|_| ())
 }
