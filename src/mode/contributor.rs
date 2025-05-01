@@ -8,12 +8,11 @@ use base64::{engine::general_purpose::STANDARD as b64, Engine};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use rand::rngs::OsRng;
 use reqwest::Client;
-use serde_json::{json, Value, Map};
+use serde_json::{Value, Map};
 use std::{
     fs,
     io::{Write, stdout},
     path::{Path, PathBuf},
-    sync::Arc,
 };
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -222,8 +221,7 @@ async fn start_json_server(dir: &Path) -> anyhow::Result<()> {
                                 Ok(obj) => {
                                     if obj.contains_key("event_type") && obj.len() >= 2 {
                                         
-                                        let public_fields = &["event_type", "order_id", "product_id"];
-                                        match prepare_tx(obj, public_fields, &dir) {
+                                        match prepare_tx(obj, &dir) {
                                             Ok(tx_json) => println!("[JSON server] -> Tx: {:#}", tx_json),
                                             Err(e)     => eprintln!("[JSON server] prepare_tx error: {:?}", e),
                                         }
