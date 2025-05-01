@@ -6,6 +6,7 @@ use aes_gcm_siv::{Aes256GcmSiv, Key, Nonce};
 use aes_gcm_siv::aead::{Aead, KeyInit};
 use blake3::Hasher;
 use serde_json::{Map, Value};
+use serde::{Serialize, Deserialize};
 use std::{
     fs,
     path::Path,
@@ -27,142 +28,172 @@ use ark_crypto_primitives::sponge::{
 };
 use hex::encode;
 use ed25519_dalek::{SigningKey, Signer, SECRET_KEY_LENGTH, PUBLIC_KEY_LENGTH, KEYPAIR_LENGTH};
+use chrono::Utc;
+use serde_jcs;
 
-pub fn prepare_tx(
-    mut obj: Map<String, Value>,
-    dir: &Path,
-) -> Result<Value> {
-    let public_fields = &["event_type", "order_id", "product_id"];
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TxConstruction {
+    pub node_id:      String,
+    pub timestamp:    i64,
+    pub public:       Map<String, Value>,
+    pub ciphertext:   String,
+    pub cipher_hash:  String,
+    pub index_tokens: Vec<String>,
+}
 
-    let b64 = fs::read_to_string(dir.join("aes.key"))
-        .context("reading aes.key")?;
-    let aes_key = BASE64_STANDARD
-        .decode(b64.trim().as_bytes())
-        .context("decoding aes.key")?;
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Tx {
+    pub node_id:        String,
+    pub timestamp:      i64,
+    pub public:         Map<String, Value>,
+    pub ciphertext:     String,
+    pub cipher_hash:    String,
+    pub index_tokens:   Vec<String>,
+    pub sig:            String,
+}
 
-    let key     =   Key::<Aes256GcmSiv>::from_slice(&aes_key);
-    let cipher  =   Aes256GcmSiv::new(key);
+pub fn prepare_tx(mut obj: Map<String, Value>, dir: &Path) -> Result<Tx> {
+    // ----------------------------------------------------------------------
+    // load metadata
+    // ----------------------------------------------------------------------
+    let node_json: Value = serde_json::from_str(
+        &fs::read_to_string(dir.join("node.json"))
+            .context("reading node.json")?,
+    )?;
+    let node_id = node_json
+        .get("uuid")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing or non-string uuid in node.json"))?
+        .to_owned();
 
-    let timestamp = chrono::Utc::now().timestamp_millis();
+    let timestamp = Utc::now().timestamp_millis();
     obj.insert("timestamp".into(), Value::Number(timestamp.into()));
 
-    // ------------------------------------------------------------------
-    // split public vs private
-    // ------------------------------------------------------------------
-    let mut public = Map::new();
-    let mut private = Map::new();
+    // ----------------------------------------------------------------------
+    // split data public/private
+    // ----------------------------------------------------------------------
+    const PUBLIC_FIELDS: &[&str] = &["event_type"];
+    let mut public   = Map::new();
+    let mut private  = Map::new();
     for (k, v) in obj.into_iter() {
-        if public_fields.contains(&k.as_str()) {
+        if PUBLIC_FIELDS.contains(&k.as_str()) {
             public.insert(k, v);
         } else {
             private.insert(k, v);
         }
     }
 
-    // ------------------------------------------------------------------
-    // create hashed index_tokens (Posedion2) of select private fields
-    // ------------------------------------------------------------------
-    let index_whitelist: HashSet<&str> = [
-        "batch_id",
-        "product_id",
-        "producer_id",
-        "order_id",
-        "user_id",
-    ]
-    .into_iter()
-    .collect();
-    
+    // ----------------------------------------------------------------------
+    // index tokens and hash with Poseidon
+    // ----------------------------------------------------------------------
+    let index_whitelist: HashSet<&str> =
+        ["batch_id", "product_id", "producer_id", "order_id", "user_id"].into();
     let mut index_tokens = Vec::new();
-    for &k in index_whitelist.iter() {
+    for &k in &index_whitelist {
         if let Some(v) = private.get(k) {
-            let tok_fr: Fr = hash_index_entry(k, v)?;
-    
-            let bytes = tok_fr
-                .into_bigint()               // PrimeField -> BigInt&#8203;:contentReference[oaicite:2]{index=2}
-                .to_bytes_le();              // BigInt   -> Vec<u8>&#8203;:contentReference[oaicite:3]{index=3}
-
-            index_tokens.push(Value::String(encode(&bytes)));
+            let tok_fr = hash_index_entry(k, v)?;
+            let tok_bytes = tok_fr.into_bigint().to_bytes_le();
+            index_tokens.push(hex::encode(tok_bytes));
         }
     }
 
-    // ------------------------------------------------------------------
-    // encrypt the private data
-    // ------------------------------------------------------------------
-    let mut nonce_buf = [0u8; 12];
-    rand::rngs::OsRng.fill_bytes(&mut nonce_buf);
-    let nonce = Nonce::from_slice(&nonce_buf);
+    // ----------------------------------------------------------------------
+    // encrypt private data with AES-GCM-SIV
+    // ----------------------------------------------------------------------
+    let aes_key = BASE64_STANDARD
+        .decode(
+            fs::read_to_string(dir.join("aes.key"))
+                .context("reading aes.key")?
+                .trim()
+                .as_bytes(),
+        )
+        .context("decoding aes.key")?;
+    let key = Key::<Aes256GcmSiv>::from_slice(&aes_key);
+    let cipher = Aes256GcmSiv::new(key);
+
+    let mut nonce_bytes = [0u8; 12];
+    rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
+    let nonce = Nonce::from_slice(&nonce_bytes);
+
     let plaintext = serde_json::to_vec(&private)?;
-    let ct = cipher
+    let ciphertext = cipher
         .encrypt(nonce, plaintext.as_ref())
-        .map_err(|e| anyhow::anyhow!(e))
+        .map_err(|e| anyhow!(e))
         .context("encrypting private JSON")?;
+    let ciphertext_b64 = BASE64_STANDARD.encode(&ciphertext);
 
-    // ------------------------------------------------------------------
-    // hash the private data + nonce
-    // ------------------------------------------------------------------
-    let mut hasher = Hasher::new();
-    // Domain tag + 8-byte length of the nonce
-    hasher.update(b"nonce");
-    hasher.update(&(nonce_buf.len() as u64).to_be_bytes());
-    hasher.update(&nonce_buf);
-    // Domain tag + 8-byte length of the ciphertext + ciphertext
-    hasher.update(b"ciphertext");
-    hasher.update(&(ct.len() as u64).to_be_bytes());
-    hasher.update(&ct);
+    // ----------------------------------------------------------------------
+    // make cipher_hash with Nonce, Ciphertext and Ciphertext length
+    // ----------------------------------------------------------------------
+    let cipher_hash = {
+        let mut h = Hasher::new();
+        h.update(b"nonce");
+        h.update(&(nonce_bytes.len() as u64).to_be_bytes());
+        h.update(&nonce_bytes);
+        h.update(b"ciphertext");
+        h.update(&(ciphertext.len() as u64).to_be_bytes());
+        h.update(&ciphertext);
+        h.finalize().to_hex().to_string()
+    };
 
-    let cipher_hash = hasher.finalize().to_hex().to_string();
+    let txc = TxConstruction {
+        node_id,
+        timestamp,
+        public,
+        ciphertext: ciphertext_b64,
+        cipher_hash,
+        index_tokens,
+    };
 
-    // ------------------------------------------------------------------
-    // assemble Tx
-    // ------------------------------------------------------------------
-    let mut out = Map::new();
-    out.insert("timestamp".into(), Value::Number(timestamp.into()));
-    out.insert("public".into(), Value::Object(public));
-    out.insert("ciphertext".into(), Value::String(BASE64_STANDARD.encode(&ct)));
-    out.insert("cipher_hash".into(), Value::String(cipher_hash));
-    out.insert("index_tokens".into(), Value::Array(index_tokens));
+    let canonical_bytes = serde_jcs::to_vec(&txc)
+        .context("serialising canonical JSON (JCS)")?;
 
-    // ───────────────────────────────────────────────────────────────────
-    // Load Ed25519 keypair
-    // ───────────────────────────────────────────────────────────────────
-    let sk_bytes = fs::read(dir.join("node.key"))
-        .context("reading node.key (32-byte Ed25519 seed)")?;
-    let pk_bytes = fs::read(dir.join("node.pub"))
-        .context("reading node.pub (32-byte Ed25519 public key)")?;
+    let signing_key = load_ed25519_keypair(dir)?;
+    let sig = signing_key.sign(&canonical_bytes);
+    let sig_b64 = BASE64_STANDARD.encode(sig.to_bytes());
+
+    let TxConstruction {
+        node_id,
+        timestamp,
+        public,
+        ciphertext,
+        cipher_hash,
+        index_tokens,
+    } = txc;
+
+    let signed_tx = Tx {
+        node_id,
+        timestamp,
+        public,
+        ciphertext,
+        cipher_hash,
+        index_tokens,
+        sig: sig_b64,
+    };
+
+    let out: Value = serde_json::to_value(signed_tx)?;
+    Ok(serde_json::from_value(out)?)
+}
+
+fn load_ed25519_keypair(dir: &Path) -> Result<SigningKey> {
+    use std::fs::read;
+
+    let sk_bytes = read(dir.join("node.key"))
+        .context("reading node.key (32-byte seed)")?;
+    let pk_bytes = read(dir.join("node.pub"))
+        .context("reading node.pub (32-byte public)")?;
 
     if sk_bytes.len() != SECRET_KEY_LENGTH {
-        anyhow::bail!("node.key must be exactly {} bytes", SECRET_KEY_LENGTH);
+        anyhow::bail!("node.key must be {} bytes", SECRET_KEY_LENGTH);
     }
     if pk_bytes.len() != PUBLIC_KEY_LENGTH {
-        anyhow::bail!("node.pub must be exactly {} bytes", PUBLIC_KEY_LENGTH);
+        anyhow::bail!("node.pub must be {} bytes", PUBLIC_KEY_LENGTH);
     }
 
-    let mut keypair_bytes = [0u8; KEYPAIR_LENGTH];
-    keypair_bytes[..SECRET_KEY_LENGTH].copy_from_slice(&sk_bytes);
-    keypair_bytes[SECRET_KEY_LENGTH..].copy_from_slice(&pk_bytes);
-
-    let signing_key = SigningKey::from_keypair_bytes(&keypair_bytes)
-        .context("parsing 64-byte Ed25519 keypair")?;
-    // ───────────────────────────────────────────────────────────────────
-    // Build a BTreeMap to get sorted-key JSON (deterministic)
-    // ───────────────────────────────────────────────────────────────────
-    let mut sign_map = BTreeMap::new();
-    sign_map.insert("timestamp",    out.get("timestamp").unwrap().clone());
-    sign_map.insert("public",       out.get("public").unwrap().clone());
-    sign_map.insert("cipher_hash",  out.get("cipher_hash").unwrap().clone());
-    sign_map.insert("index_tokens", out.get("index_tokens").unwrap().clone());
-
-    let msg = serde_json::to_vec(&sign_map)
-        .context("serializing signing payload")?;
-
-    // ───────────────────────────────────────────────────────────────────
-    // Sign & insert
-    // ───────────────────────────────────────────────────────────────────
-    let sig = signing_key.sign(&msg);
-    let sig_b64 = base64::encode(sig.to_bytes());
-    out.insert("sig".into(), Value::String(sig_b64));
-
-    Ok(Value::Object(out))
+    let mut pair = [0u8; KEYPAIR_LENGTH];
+    pair[..SECRET_KEY_LENGTH].copy_from_slice(&sk_bytes);
+    pair[SECRET_KEY_LENGTH..].copy_from_slice(&pk_bytes);
+    Ok(SigningKey::from_keypair_bytes(&pair)?)
 }
 
 fn poseidon_bn254_t3() -> PoseidonConfig<Fr> {

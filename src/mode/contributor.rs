@@ -222,7 +222,7 @@ async fn start_json_server(dir: &Path) -> anyhow::Result<()> {
                                     if obj.contains_key("event_type") && obj.len() >= 2 {
                                         
                                         match prepare_tx(obj, &dir) {
-                                            Ok(tx_json) => println!("[JSON server] -> Tx: {:#}", tx_json),
+                                            Ok(tx_json) => println!("[JSON server] -> Tx: {:#?}", tx_json),
                                             Err(e)     => eprintln!("[JSON server] prepare_tx error: {:?}", e),
                                         }
                                     } else {

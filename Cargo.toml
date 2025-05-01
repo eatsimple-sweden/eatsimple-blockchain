@@ -63,6 +63,7 @@ tonic = { version = "0.13", features = ["transport", "tls-ring"], optional = tru
 tower = "0.5.2"
 tracing = "0.1.41"
 uuid = { version = "1.16.0", features = ["v4", "serde"] }
+serde_jcs = "0.1.0"
 
 [build-dependencies]
 tonic-build = { version = "0.13", optional = true }
