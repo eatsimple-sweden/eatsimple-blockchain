@@ -6,10 +6,12 @@ use aes_gcm_siv::{Aes256GcmSiv, Key, Nonce};
 use aes_gcm_siv::aead::{Aead, KeyInit};
 use blake3::Hasher;
 use serde_json::{Map, Value};
-use std::fs;
 use std::{
+    fs,
     path::Path,
-    collections::HashSet,
+    collections::{
+        HashSet, BTreeMap,
+    },
 };
 use base64::prelude::*;
 use anyhow::anyhow;
@@ -24,6 +26,7 @@ use ark_crypto_primitives::sponge::{
     CryptographicSponge,
 };
 use hex::encode;
+use ed25519_dalek::{SigningKey, Signer, SECRET_KEY_LENGTH, PUBLIC_KEY_LENGTH, KEYPAIR_LENGTH};
 
 pub fn prepare_tx(
     mut obj: Map<String, Value>,
@@ -75,8 +78,8 @@ pub fn prepare_tx(
             let tok_fr: Fr = hash_index_entry(k, v)?;
     
             let bytes = tok_fr
-                .into_bigint()               // PrimeField → BigInt&#8203;:contentReference[oaicite:2]{index=2}
-                .to_bytes_le();              // BigInt   → Vec<u8>&#8203;:contentReference[oaicite:3]{index=3}
+                .into_bigint()               // PrimeField -> BigInt&#8203;:contentReference[oaicite:2]{index=2}
+                .to_bytes_le();              // BigInt   -> Vec<u8>&#8203;:contentReference[oaicite:3]{index=3}
 
             index_tokens.push(Value::String(encode(&bytes)));
         }
@@ -118,6 +121,46 @@ pub fn prepare_tx(
     out.insert("ciphertext".into(), Value::String(BASE64_STANDARD.encode(&ct)));
     out.insert("cipher_hash".into(), Value::String(cipher_hash));
     out.insert("index_tokens".into(), Value::Array(index_tokens));
+
+    // ───────────────────────────────────────────────────────────────────
+    // Load Ed25519 keypair
+    // ───────────────────────────────────────────────────────────────────
+    let sk_bytes = fs::read(dir.join("node.key"))
+        .context("reading node.key (32-byte Ed25519 seed)")?;
+    let pk_bytes = fs::read(dir.join("node.pub"))
+        .context("reading node.pub (32-byte Ed25519 public key)")?;
+
+    if sk_bytes.len() != SECRET_KEY_LENGTH {
+        anyhow::bail!("node.key must be exactly {} bytes", SECRET_KEY_LENGTH);
+    }
+    if pk_bytes.len() != PUBLIC_KEY_LENGTH {
+        anyhow::bail!("node.pub must be exactly {} bytes", PUBLIC_KEY_LENGTH);
+    }
+
+    let mut keypair_bytes = [0u8; KEYPAIR_LENGTH];
+    keypair_bytes[..SECRET_KEY_LENGTH].copy_from_slice(&sk_bytes);
+    keypair_bytes[SECRET_KEY_LENGTH..].copy_from_slice(&pk_bytes);
+
+    let signing_key = SigningKey::from_keypair_bytes(&keypair_bytes)
+        .context("parsing 64-byte Ed25519 keypair")?;
+    // ───────────────────────────────────────────────────────────────────
+    // Build a BTreeMap to get sorted-key JSON (deterministic)
+    // ───────────────────────────────────────────────────────────────────
+    let mut sign_map = BTreeMap::new();
+    sign_map.insert("timestamp",    out.get("timestamp").unwrap().clone());
+    sign_map.insert("public",       out.get("public").unwrap().clone());
+    sign_map.insert("cipher_hash",  out.get("cipher_hash").unwrap().clone());
+    sign_map.insert("index_tokens", out.get("index_tokens").unwrap().clone());
+
+    let msg = serde_json::to_vec(&sign_map)
+        .context("serializing signing payload")?;
+
+    // ───────────────────────────────────────────────────────────────────
+    // Sign & insert
+    // ───────────────────────────────────────────────────────────────────
+    let sig = signing_key.sign(&msg);
+    let sig_b64 = base64::encode(sig.to_bytes());
+    out.insert("sig".into(), Value::String(sig_b64));
 
     Ok(Value::Object(out))
 }
