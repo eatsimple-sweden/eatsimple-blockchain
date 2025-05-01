@@ -76,3 +76,16 @@ pub fn load_ca(path: &str) -> Result<RootCertStore> {
     }
     Ok(store)
 }
+
+pub fn json_to_fr(v: &serde_json::Value) -> anyhow::Result<ark_bn254::Fr> {
+    use ark_ff::PrimeField;
+    // turn basic JSON types into a byte‐string
+    let s = match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Bool(b)   => b.to_string(),
+        other                        => serde_json::to_string(other)?,
+    };
+    // little‐endian mod‐order reduction
+    Ok(ark_bn254::Fr::from_le_bytes_mod_order(s.as_bytes()))
+}
