@@ -2,6 +2,7 @@ use crate::{
     config::ContributorConfig,
     handlers::enroll::models::{EnrollReq, EnrollResp},
     crypto::prepare_tx,
+    grpc::send_tx,
 };
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD as b64, Engine};
@@ -222,7 +223,17 @@ async fn start_json_server(dir: &Path) -> anyhow::Result<()> {
                                     if obj.contains_key("event_type") && obj.len() >= 2 {
                                         
                                         match prepare_tx(obj, &dir) {
-                                            Ok(tx_json) => println!("[JSON server] -> Tx: {:#?}", tx_json),
+                                            Ok(tx) => {
+                                                #[cfg(debug_assertions)]
+                                                match serde_json::to_string_pretty(&tx) {
+                                                    Ok(s)  => println!("[JSON server] -> Tx:\n{}", s),
+                                                    Err(e) => eprintln!("[JSON server] JSON pretty‐print error: {}", e),
+                                                }
+                                        
+                                                if let Err(e) = send_tx(&tx, &dir, "https://grpc.blockchain.eatsimple.se:50051").await {
+                                                    eprintln!("[JSON server] gRPC send error: {e:?}");
+                                                }
+                                            }
                                             Err(e)     => eprintln!("[JSON server] prepare_tx error: {:?}", e),
                                         }
                                     } else {
