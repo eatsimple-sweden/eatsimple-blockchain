@@ -2,6 +2,7 @@ use crate::{
     config::ContributorConfig,
     handlers::enroll::models::{EnrollReq, EnrollResp},
     crypto::prepare_tx,
+    grpc::send_tx,
 };
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD as b64, Engine};
@@ -23,6 +24,12 @@ use tokio::{
 };
 use once_cell::sync::Lazy;
 use tracing::debug;
+use pkcs8::{EncodePrivateKey, DecodePrivateKey, LineEnding};
+use openssl::{
+    ec::{EcGroup, EcKey},
+    pkey::PKey,
+    nid::Nid,
+};
 
 fn file(p: &Path, name: &str) -> PathBuf {
     p.join(name)
@@ -55,7 +62,11 @@ pub async fn run(cfg: ContributorConfig) -> Result<()> {
 
     if is_enrolled() {
         println!("[Contributor] state already initialised, ready.");
-        start_json_server(&dir).await?;
+        start_json_server(
+            dir.clone(),
+            cfg.sequencer_grpc_domain.clone(),
+            cfg.sequencer_http_domain.clone(),
+        ).await?;
     } else {
         println!("[Contributor] not yet enrolled; type `enroll` to get started.");
     }
@@ -101,7 +112,11 @@ pub async fn run(cfg: ContributorConfig) -> Result<()> {
                     } else {
                         println!("[Contributor] enroll succeeded");
                         
-                        start_json_server(&dir).await?;
+                        start_json_server(
+                            dir.clone(),
+                            cfg.sequencer_grpc_domain.clone(),
+                            cfg.sequencer_http_domain.clone(),
+                        ).await?;
                     }
                 }
             }
@@ -119,29 +134,44 @@ async fn do_enroll(cfg: &ContributorConfig, dir: &Path) -> Result<()> {
     // ------------------------------------------------------------------
     // generate key-pair on first run if no state
     // ------------------------------------------------------------------
-    let mut csprng = OsRng;
-    let (priv_bytes, pub_bytes) = if !file(dir, "node.key").exists() {
-        let signing_key: SigningKey = SigningKey::generate(&mut csprng);
-        let verifying_key: VerifyingKey = signing_key.verifying_key();
-        let sk = signing_key.to_bytes();
-        let pk = verifying_key.to_bytes();
-        fs::write(file(dir, "node.key"), &sk)?;
-        fs::write(file(dir, "node.pub"), &pk)?;
-        println!("🔑 generated new key-pair");
-        (sk.to_vec(), pk.to_vec())
+    let sk_path = file(dir, "node.key");
+    let pk_path = file(dir, "node.pub");
+    if !sk_path.exists() {
+        let sk = SigningKey::generate(&mut OsRng);
+        let pk = VerifyingKey::from(&sk);
+        let sk_bytes = sk.to_bytes();
+        let pk_bytes = pk.to_bytes();
+        // write 32‐byte seed
+        async_fs::write(&sk_path, &sk_bytes)
+            .await
+            .context("persist node.key")?;
+        // write 32‐byte pub
+        async_fs::write(&pk_path, &pk_bytes)
+            .await
+            .context("persist node.pub")?;
+    }
+
+    // -------------------- TLS keypair (P-256) --------------------
+    let ec_group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
+    let (pkey, spki_der) = if !file(dir, "client.key").exists() {
+        // generate new key
+        let ec = EcKey::generate(&ec_group)?;
+        let pkey = PKey::from_ec_key(ec)?;
+        // ----- write PKCS#8 PEM -----
+        let pkcs8_pem = pkey.private_key_to_pem_pkcs8()?;
+        async_fs::write(file(dir, "client.key"), &pkcs8_pem).await?;
+        // return SPKI DER for enroll
+        let spki = pkey.public_key_to_der()?;
+        (pkey, spki)
     } else {
-        (fs::read(file(dir, "node.key"))?, fs::read(file(dir, "node.pub"))?)
+        // ----- read PKCS#8 PEM back -----
+        let pem = async_fs::read(file(dir, "client.key")).await?;
+        let pkey = PKey::private_key_from_pem(&pem)?;
+        let spki = pkey.public_key_to_der()?;
+        (pkey, spki)
     };
 
-    let mut spki_der = Vec::with_capacity(43);
-    spki_der.extend_from_slice(&[
-        0x30, 0x2a,
-        0x30, 0x05,
-          0x06, 0x03, 0x2b, 0x65, 0x70,
-        0x03, 0x21, 0x00,
-    ]);
-    spki_der.extend_from_slice(&pub_bytes);
-    let pub_key_b64 = b64.encode(&spki_der);
+    let pub_key_b64 = base64::engine::general_purpose::STANDARD.encode(&spki_der);
 
     // ------------------------------------------------------------------
     // enrol with sequencer (EXAMPLE JWT)
@@ -170,21 +200,25 @@ async fn do_enroll(cfg: &ContributorConfig, dir: &Path) -> Result<()> {
     // ------------------------------------------------------------------
     // persist the response
     // ------------------------------------------------------------------
-    async_fs::write(file(dir, "seq.crt"),   resp.cert_pem).await?;
-    async_fs::write(file(dir, "ca.pem"),    resp.ca_pem).await?;
-    async_fs::write(file(dir, "aes.key"),   resp.aes_key_b64).await?;
-    async_fs::write(file(dir, "det.key"),   resp.det_key_b64).await?;
+    async_fs::write(file(dir, "client.pem"), resp.cert_pem).await?;
+    async_fs::write(file(dir, "ca.pem"),     resp.ca_pem).await?;
+
+    async_fs::write(file(dir, "aes.key"), resp.aes_key_b64).await?;
+    async_fs::write(file(dir, "det.key"), resp.det_key_b64).await?;
     async_fs::write(
         file(dir, "node.json"),
         serde_json::to_string_pretty(&resp.node_config)?,
-    )
-    .await?;
+    ).await?;
 
     println!("[Contributor] enrollment complete; uuid = {}", resp.node_config.uuid);
     Ok(())
 }
 
-async fn start_json_server(dir: &Path) -> anyhow::Result<()> {
+async fn start_json_server(
+    dir: PathBuf,
+    grpc_domain: String,
+    http_domain: String,
+) -> anyhow::Result<()> {
     let dir = dir.to_path_buf();
     let mut guard = JSON_SERVER.lock().await;
     if guard.is_some() {
@@ -207,7 +241,9 @@ async fn start_json_server(dir: &Path) -> anyhow::Result<()> {
             };
             debug!("[JSON server] new connection from {}", peer);
 
-            let dir = dir.clone(); 
+            let dir         = dir.to_path_buf(); 
+            let grpc_domain = grpc_domain.to_owned();
+            let http_domain = http_domain.to_owned(); 
             tokio::spawn(async move {
                 let mut reader = tokio::io::BufReader::new(socket);
                 let mut buf = String::new();
@@ -222,7 +258,17 @@ async fn start_json_server(dir: &Path) -> anyhow::Result<()> {
                                     if obj.contains_key("event_type") && obj.len() >= 2 {
                                         
                                         match prepare_tx(obj, &dir) {
-                                            Ok(tx_json) => println!("[JSON server] -> Tx: {:#?}", tx_json),
+                                            Ok(tx) => {
+                                                #[cfg(debug_assertions)]
+                                                match serde_json::to_string_pretty(&tx) {
+                                                    Ok(s)  => println!("[JSON server] -> Tx:\n{}", s),
+                                                    Err(e) => eprintln!("[JSON server] JSON pretty‐print error: {}", e),
+                                                }
+                                        
+                                                if let Err(e) = send_tx(&tx, &dir, &grpc_domain, &http_domain).await {
+                                                    eprintln!("[JSON server] gRPC send error: {e:?}");
+                                                }
+                                            }
                                             Err(e)     => eprintln!("[JSON server] prepare_tx error: {:?}", e),
                                         }
                                     } else {

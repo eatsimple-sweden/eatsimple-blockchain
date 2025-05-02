@@ -12,7 +12,7 @@ use base64::prelude::*;
 use std::convert::TryFrom;
 use openssl::{
     x509::{X509, X509Builder, X509NameBuilder},
-    pkey::PKey,
+    pkey::{PKey, Id as PKeyId},
     asn1::Asn1Time,
     hash::MessageDigest,
 };
@@ -86,7 +86,12 @@ pub async fn enroll_handler(
 
     let pubkey = PKey::public_key_from_der(&pubkey_der).map_err(to_http_err)?;
     builder.set_pubkey(&pubkey).map_err(to_http_err)?;
-    builder.sign(&ca_key, MessageDigest::null()).map_err(to_http_err)?;
+    
+    let ca_digest = match ca_key.id() {
+        PKeyId::ED25519 => MessageDigest::null(),  // Ed25519 - no external hash
+        _               => MessageDigest::sha256(),// ECDSA-P256, RSA, etc.
+    };
+    builder.sign(&ca_key, ca_digest).map_err(to_http_err)?;
 
     sqlx::query!(
         r#"

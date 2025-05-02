@@ -13,13 +13,14 @@ service WitnessService {
 }
 
 message TxRequest {
-	string node_uuid      		= 1;        // who signed
-	int64  timestamp_ms   		= 2;        // writer’s wall-clock
-	bytes  public_json    		= 3;        // UTF-8 JSON
-	bytes  cipher_json    		= 4;        // AES-GCM-256 ciphertext
-	bytes  cipher_hash    		= 5;        // BLAKE3(cipher_json) – 32 B
-	repeated bytes index_tokens = 6;    	// N × 32-byte BLAKE3(det_key || K || V)
-	bytes  signature      		= 7;		// 64-byte Ed25519 over   -   node_uuid || timestamp_ms || public_json || cipher_hash || index_tokens[0]
+	string        	node_uuid     	= 1;	// signer
+	int64         	timestamp_ms  	= 2;
+	bytes         	public_json   	= 3;	// canonical UTF-8 JSON
+	bytes         	nonce         	= 4;	// 12-byte AES-GCM-SIV nonce
+	bytes         	cipher_bytes  	= 5;	// raw ciphertext
+	bytes         	cipher_hash   	= 6;	// 32 B BLAKE3
+	repeated bytes 	index_tokens 	= 7;	// each 32 B Poseidon hash
+	bytes         	signature     	= 8;	// 64 B Ed25519
 }
 
 message IngestResponse {
