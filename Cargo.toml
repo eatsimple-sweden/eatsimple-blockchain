@@ -65,6 +65,7 @@ tracing = "0.1.41"
 uuid = { version = "1.16.0", features = ["v4", "serde"] }
 serde_jcs = "0.1.0"
 pkcs8 = { version = "0.10.2", features = ["alloc", "pem"]}
+tracing-subscriber = "0.3.19"
 
 [build-dependencies]
 tonic-build = { version = "0.13", optional = true }
