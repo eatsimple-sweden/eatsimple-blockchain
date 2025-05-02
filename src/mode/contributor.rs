@@ -24,6 +24,7 @@ use tokio::{
 };
 use once_cell::sync::Lazy;
 use tracing::debug;
+use pkcs8::{EncodePrivateKey, DecodePrivateKey, LineEnding};
 
 fn file(p: &Path, name: &str) -> PathBuf {
     p.join(name)
@@ -121,25 +122,21 @@ async fn do_enroll(cfg: &ContributorConfig, dir: &Path) -> Result<()> {
     // generate key-pair on first run if no state
     // ------------------------------------------------------------------
     let mut csprng = OsRng;
-    let (priv_bytes, pub_bytes) = if !file(dir, "node.key").exists() {
-        let signing_key: SigningKey = SigningKey::generate(&mut csprng);
-        let verifying_key: VerifyingKey = signing_key.verifying_key();
-        let sk = signing_key.to_bytes();
-        let pk = verifying_key.to_bytes();
-        fs::write(file(dir, "node.key"), &sk)?;
-        fs::write(file(dir, "node.pub"), &pk)?;
-        println!("🔑 generated new key-pair");
-        (sk.to_vec(), pk.to_vec())
+    let signing_key: SigningKey = if !file(dir, "client.key").exists() {
+        let sk = SigningKey::generate(&mut OsRng);
+        let pem = sk.to_pkcs8_pem(LineEnding::LF)?;                // needs traits
+        async_fs::write(file(dir, "client.key"), pem.as_bytes()).await?;
+        sk
     } else {
-        (fs::read(file(dir, "node.key"))?, fs::read(file(dir, "node.pub"))?)
+        let pem = async_fs::read(file(dir, "client.key")).await?;
+        SigningKey::from_pkcs8_der(&pem)?
     };
-
+    
+    let pub_bytes = signing_key.verifying_key().to_bytes();
+    
     let mut spki_der = Vec::with_capacity(43);
     spki_der.extend_from_slice(&[
-        0x30, 0x2a,
-        0x30, 0x05,
-          0x06, 0x03, 0x2b, 0x65, 0x70,
-        0x03, 0x21, 0x00,
+        0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
     ]);
     spki_der.extend_from_slice(&pub_bytes);
     let pub_key_b64 = b64.encode(&spki_der);
@@ -173,8 +170,6 @@ async fn do_enroll(cfg: &ContributorConfig, dir: &Path) -> Result<()> {
     // ------------------------------------------------------------------
     async_fs::write(file(dir, "client.pem"), resp.cert_pem).await?;
     async_fs::write(file(dir, "ca.pem"),     resp.ca_pem).await?;
-
-    async_fs::copy(file(dir, "node.key"), file(dir, "client.key")).await?;
 
     async_fs::write(file(dir, "aes.key"), resp.aes_key_b64).await?;
     async_fs::write(file(dir, "det.key"), resp.det_key_b64).await?;

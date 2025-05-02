@@ -894,6 +894,7 @@ dependencies = [
  "jsonwebtoken",
  "once_cell",
  "openssl",
+ "pkcs8",
  "prost",
  "rand",
  "rcgen",
