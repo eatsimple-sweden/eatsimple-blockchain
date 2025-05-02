@@ -74,7 +74,7 @@ pub fn prepare_tx(mut obj: Map<String, Value>, dir: &Path) -> Result<Tx> {
     // ----------------------------------------------------------------------
     // split data public/private
     // ----------------------------------------------------------------------
-    const PUBLIC_FIELDS: &[&str] = &["event_type"];
+    const PUBLIC_FIELDS: &[&str] = &["event_type", "packaging_id", "item_id"];
     let mut public   = Map::new();
     let mut private  = Map::new();
     for (k, v) in obj.into_iter() {

@@ -6,10 +6,9 @@ use eatsimple_blockchain::mode;
 async fn main() -> Result<()> {
     let cfg = config::SequencerConfig::load("config/sequencer.toml")?;
 
-    unsafe {
-        std::env::set_var("RUST_LOG", "rustls=trace,webpki=trace");
-    }
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_env_filter("info")
+        .init();
 
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()

@@ -93,6 +93,12 @@ pub async fn batch_loop(
             let cfg_cloned = cfg.clone();
             let seal_tx_cloned = seal_tx.clone();
 
+            tracing::info!(
+                height = h_cur,
+                entries = txs.len(),
+                "flushing {} txs into new block, spawning make_local_header",
+            );
+
             tokio::spawn(async move {
                 if let Ok((block, my_sig)) = make_local_header(txs, h_cur, p_hash, &cfg_cloned) {
                     if let Ok(sigs) = collect_witness_sigs(block.header.clone(), my_sig, &cfg_cloned).await {
@@ -116,6 +122,8 @@ fn make_local_header(
     cfg: &SequencerConfig,
 ) -> anyhow::Result<(Block, Vec<u8>)> {
     let (root, _) = merkle_root(&txs);
+    tracing::debug!(height, root = hex::encode(root), entries = txs.len(), "compute merkle root");
+
     let header = BlockHeader {
         height,
         prev_hash,
@@ -133,6 +141,13 @@ async fn collect_witness_sigs(
     my_sig: Vec<u8>,
     cfg: &SequencerConfig,
 ) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
+    if cfg.witness_threshold <= 1 {
+        tracing::info!(
+            threshold = cfg.witness_threshold,
+            "witness_threshold ≤ 1, skipping remote witnesses"
+        );
+        return Ok(vec![(cfg.sequencer_node_uuid.clone(), my_sig)]);
+    }
 
     let mut futs = FuturesUnordered::new();
     for ep in &cfg.witness_endpoints {
