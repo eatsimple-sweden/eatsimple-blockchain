@@ -1,6 +1,7 @@
 use anyhow::Result;
 use eatsimple_blockchain::config;
 use eatsimple_blockchain::mode;
+use tracing_subscriber::fmt;
 
 #[tokio::main]
 async fn main() -> Result<()> {
