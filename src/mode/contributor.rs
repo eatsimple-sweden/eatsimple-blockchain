@@ -132,7 +132,15 @@ async fn do_enroll(cfg: &ContributorConfig, dir: &Path) -> Result<()> {
         SigningKey::from_pkcs8_der(&pem)?
     };
     
-    let pub_bytes = signing_key.verifying_key().to_bytes();
+    let raw_seed   = signing_key.to_bytes();                       // [u8; 32]
+    let pub_bytes  = signing_key.verifying_key().to_bytes();       // [u8; 32]
+
+    if !file(dir, "node.key").exists() {
+        async_fs::write(file(dir, "node.key"), &raw_seed).await?;
+    }
+    if !file(dir, "node.pub").exists() {
+        async_fs::write(file(dir, "node.pub"), &pub_bytes).await?;
+    }
     
     let mut spki_der = Vec::with_capacity(43);
     spki_der.extend_from_slice(&[
