@@ -186,7 +186,7 @@ async fn do_enroll(cfg: &ContributorConfig, dir: &Path) -> Result<()> {
             .context("parsing EC private key")?
     };
 
-    async_fs::write(file(dir, "node.key"), &ec_key.private_key_to_der()?).await?;
+    // async_fs::write(file(dir, "node.key"), &ec_key.private_key_to_der()?).await?;
 
     let pkey = PKey::from_ec_key(ec_key.clone())
         .context("wrapping EC key in PKey")?;
