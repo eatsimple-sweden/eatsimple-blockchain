@@ -171,15 +171,17 @@ async fn do_enroll(cfg: &ContributorConfig, dir: &Path) -> Result<()> {
     // ------------------------------------------------------------------
     // persist the response
     // ------------------------------------------------------------------
-    async_fs::write(file(dir, "seq.crt"),   resp.cert_pem).await?;
-    async_fs::write(file(dir, "ca.pem"),    resp.ca_pem).await?;
-    async_fs::write(file(dir, "aes.key"),   resp.aes_key_b64).await?;
-    async_fs::write(file(dir, "det.key"),   resp.det_key_b64).await?;
+    async_fs::write(file(dir, "client.pem"), resp.cert_pem).await?;
+    async_fs::write(file(dir, "ca.pem"),     resp.ca_pem).await?;
+
+    async_fs::copy(file(dir, "node.key"), file(dir, "client.key")).await?;
+
+    async_fs::write(file(dir, "aes.key"), resp.aes_key_b64).await?;
+    async_fs::write(file(dir, "det.key"), resp.det_key_b64).await?;
     async_fs::write(
         file(dir, "node.json"),
         serde_json::to_string_pretty(&resp.node_config)?,
-    )
-    .await?;
+    ).await?;
 
     println!("[Contributor] enrollment complete; uuid = {}", resp.node_config.uuid);
     Ok(())
