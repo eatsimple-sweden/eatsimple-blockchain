@@ -86,7 +86,13 @@ pub async fn enroll_handler(
 
     let pubkey = PKey::public_key_from_der(&pubkey_der).map_err(to_http_err)?;
     builder.set_pubkey(&pubkey).map_err(to_http_err)?;
-    builder.sign(&ca_key, MessageDigest::null()).map_err(to_http_err)?;
+    // builder.sign(&ca_key, MessageDigest::null()).map_err(to_http_err)?;
+    
+    let digest = match pubkey.id() {
+        openssl::pkey::Id::EC | openssl::pkey::Id::RSA => MessageDigest::sha256(),
+        _ => MessageDigest::sha256(),
+    };
+    builder.sign(&ca_key, digest).map_err(to_http_err)?;
 
     sqlx::query!(
         r#"

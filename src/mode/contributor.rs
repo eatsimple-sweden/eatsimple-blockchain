@@ -25,6 +25,11 @@ use tokio::{
 use once_cell::sync::Lazy;
 use tracing::debug;
 use pkcs8::{EncodePrivateKey, DecodePrivateKey, LineEnding};
+use openssl::{
+    ec::{EcGroup, EcKey},
+    pkey::PKey,
+    nid::Nid,
+};
 
 fn file(p: &Path, name: &str) -> PathBuf {
     p.join(name)
@@ -121,32 +126,53 @@ async fn do_enroll(cfg: &ContributorConfig, dir: &Path) -> Result<()> {
     // ------------------------------------------------------------------
     // generate key-pair on first run if no state
     // ------------------------------------------------------------------
-    let mut csprng = OsRng;
-    let signing_key: SigningKey = if !file(dir, "client.key").exists() {
-        let sk = SigningKey::generate(&mut OsRng);
-        let pem = sk.to_pkcs8_pem(LineEnding::LF)?;                // needs traits
-        async_fs::write(file(dir, "client.key"), pem.as_bytes()).await?;
-        sk
-    } else {
-        let pem = async_fs::read(file(dir, "client.key")).await?;
-        SigningKey::from_pkcs8_der(&pem)?
-    };
+    // let mut csprng = OsRng;
+    // let signing_key: SigningKey = if !file(dir, "client.key").exists() {
+    //     let sk = SigningKey::generate(&mut OsRng);
+    //     let pem = sk.to_pkcs8_pem(LineEnding::LF)?;                // needs traits
+    //     async_fs::write(file(dir, "client.key"), pem.as_bytes()).await?;
+    //     sk
+    // } else {
+    //     let pem = async_fs::read(file(dir, "client.key")).await?;
+    //     SigningKey::from_pkcs8_der(&pem)?
+    // };
     
-    let raw_seed   = signing_key.to_bytes();                       // [u8; 32]
-    let pub_bytes  = signing_key.verifying_key().to_bytes();       // [u8; 32]
+    // let raw_seed   = signing_key.to_bytes();                       // [u8; 32]
+    // let pub_bytes  = signing_key.verifying_key().to_bytes();       // [u8; 32]
 
-    if !file(dir, "node.key").exists() {
-        async_fs::write(file(dir, "node.key"), &raw_seed).await?;
-    }
-    if !file(dir, "node.pub").exists() {
-        async_fs::write(file(dir, "node.pub"), &pub_bytes).await?;
-    }
+    // if !file(dir, "node.key").exists() {
+    //     async_fs::write(file(dir, "node.key"), &raw_seed).await?;
+    // }
+    // if !file(dir, "node.pub").exists() {
+    //     async_fs::write(file(dir, "node.pub"), &pub_bytes).await?;
+    // }
     
-    let mut spki_der = Vec::with_capacity(43);
-    spki_der.extend_from_slice(&[
-        0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
-    ]);
-    spki_der.extend_from_slice(&pub_bytes);
+    // let mut spki_der = Vec::with_capacity(43);
+    // spki_der.extend_from_slice(&[
+    //     0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+    // ]);
+    // spki_der.extend_from_slice(&pub_bytes);
+    // let pub_key_b64 = b64.encode(&spki_der);
+    let ec_group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)
+        .context("failed to get P-256 curve")?;
+    let ec_key: EcKey<openssl::pkey::Private> = if !file(dir, "client.key").exists() {
+        let k = EcKey::generate(&ec_group)
+            .context("generating EC key")?;
+        let priv_der = k.private_key_to_der()
+            .context("DER-encoding EC private key")?;
+        async_fs::write(file(dir, "client.key"), &priv_der).await?;
+        k
+    } else {
+        let priv_der = async_fs::read(file(dir, "client.key")).await?;
+        EcKey::private_key_from_der(&priv_der)
+            .context("parsing EC private key")?
+    };
+
+    async_fs::write(file(dir, "node.key"), &ec_key.private_key_to_der()?).await?;
+
+    let pkey = PKey::from_ec_key(ec_key.clone())
+        .context("wrapping EC key in PKey")?;
+    let spki_der = pkey.public_key_to_der()?;
     let pub_key_b64 = b64.encode(&spki_der);
 
     // ------------------------------------------------------------------

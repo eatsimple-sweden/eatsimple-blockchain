@@ -23,7 +23,7 @@ default         = ["sequencer"]
 writer          = []
 witness         = ["openssl"]
 sequencer       = ["ed25519-dalek", "witness", "grpc", "sled", "sqlx"]
-contributor     = ["ed25519-dalek", "grpc", "sled"]
+contributor     = ["ed25519-dalek", "grpc", "sled", "openssl"]
 grpc            = ["tonic/transport", "tonic/tls-ring", "tonic-build"]
 
 [dependencies]
