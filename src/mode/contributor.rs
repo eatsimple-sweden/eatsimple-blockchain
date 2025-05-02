@@ -62,7 +62,11 @@ pub async fn run(cfg: ContributorConfig) -> Result<()> {
 
     if is_enrolled() {
         println!("[Contributor] state already initialised, ready.");
-        start_json_server(&dir).await?;
+        start_json_server(
+            dir.clone(),
+            cfg.sequencer_grpc_domain.clone(),
+            cfg.sequencer_http_domain.clone(),
+        ).await?;
     } else {
         println!("[Contributor] not yet enrolled; type `enroll` to get started.");
     }
@@ -108,7 +112,11 @@ pub async fn run(cfg: ContributorConfig) -> Result<()> {
                     } else {
                         println!("[Contributor] enroll succeeded");
                         
-                        start_json_server(&dir).await?;
+                        start_json_server(
+                            dir.clone(),
+                            cfg.sequencer_grpc_domain.clone(),
+                            cfg.sequencer_http_domain.clone(),
+                        ).await?;
                     }
                 }
             }
@@ -206,7 +214,11 @@ async fn do_enroll(cfg: &ContributorConfig, dir: &Path) -> Result<()> {
     Ok(())
 }
 
-async fn start_json_server(dir: &Path) -> anyhow::Result<()> {
+async fn start_json_server(
+    dir: PathBuf,
+    grpc_domain: String,
+    http_domain: String,
+) -> anyhow::Result<()> {
     let dir = dir.to_path_buf();
     let mut guard = JSON_SERVER.lock().await;
     if guard.is_some() {
@@ -229,7 +241,9 @@ async fn start_json_server(dir: &Path) -> anyhow::Result<()> {
             };
             debug!("[JSON server] new connection from {}", peer);
 
-            let dir = dir.clone(); 
+            let dir         = dir.to_path_buf(); 
+            let grpc_domain = grpc_domain.to_owned();
+            let http_domain = http_domain.to_owned(); 
             tokio::spawn(async move {
                 let mut reader = tokio::io::BufReader::new(socket);
                 let mut buf = String::new();
@@ -251,7 +265,7 @@ async fn start_json_server(dir: &Path) -> anyhow::Result<()> {
                                                     Err(e) => eprintln!("[JSON server] JSON pretty‐print error: {}", e),
                                                 }
                                         
-                                                if let Err(e) = send_tx(&tx, &dir, "https://grpc.blockchain.eatsimple.se:50051").await {
+                                                if let Err(e) = send_tx(&tx, &dir, &grpc_domain, &http_domain).await {
                                                     eprintln!("[JSON server] gRPC send error: {e:?}");
                                                 }
                                             }

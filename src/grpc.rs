@@ -42,22 +42,29 @@ pub fn make_server(state: SequencerAppState) -> IngestServiceServer<IngestSvc> {
 }
 
 #[cfg(feature = "contributor")]
-pub async fn send_tx(tx: &Tx, dir: &Path, sequencer_url: &str) -> anyhow::Result<()> {
+pub async fn send_tx(
+    tx: &Tx,
+    dir: &Path,
+    grpc_domain: &str,
+    http_domain: &str,
+) -> anyhow::Result<()> {
     let client_cert = tokio::fs::read(dir.join("client.pem")).await?;
     let client_key  = tokio::fs::read(dir.join("client.key")).await?;
     let ca_cert     = tokio::fs::read(dir.join("ca.pem")).await?;
 
+    let grpc_url = format!("https://{grpc_domain}:50051");
+
     let tls = ClientTlsConfig::new()
-        .domain_name("sequencer.example.com")
+        .domain_name(grpc_domain)
         .identity(Identity::from_pem(client_cert, client_key))
         .ca_certificate(Certificate::from_pem(ca_cert));
 
-    let channel = Channel::from_shared(sequencer_url.to_owned())?
+    let channel = Channel::from_shared(grpc_url)?
         .tls_config(tls)?
         .connect()
         .await?;
 
-    let mut client = IngestServiceClient::connect(sequencer_url.to_owned()).await?;
+    let mut client = IngestServiceClient::new(channel);
 
     let req = TxRequest {
         node_uuid:    tx.node_id.clone(),
