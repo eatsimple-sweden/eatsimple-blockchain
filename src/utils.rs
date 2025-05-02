@@ -1,77 +1,60 @@
-use rustls_pemfile::{read_all, read_one, Item};
-use rustls::{
-    Certificate, PrivateKey, RootCertStore,
-};
+use rustls_pemfile::{read_all, read_one, Item, certs};
 use anyhow::{bail, Context, Result};
 use std::{
     fs::File,
     io::BufReader,
 };
+use rustls::{
+    RootCertStore,
+    pki_types::{CertificateDer, PrivateKeyDer},
+};
 
 // reads a cert file and gives back all x509 certs in it (PEM -> rustls::Certificate)
-pub fn load_certs(path: &str) -> Result<Vec<Certificate>> {
-    // open the cert file and buffer it
+pub fn load_certs(path: &str) -> Result<Vec<CertificateDer<'static>>> {
     let file = File::open(path)
         .with_context(|| format!("opening certificate file `{}`", path))?;
     let mut rd = BufReader::new(file);
 
-    // parse all PEM blocks
-    let items: Vec<Item> = read_all(&mut rd)
+    let raw_certs = certs(&mut rd)
         .collect::<std::result::Result<_, _>>()
-        .context("reading PEM items from cert file")?;
+        .context("reading certificates from PEM")?;
 
-    // pick only X509 certs and convert to rustls certs
-    let certs = items.into_iter().filter_map(|item| {
-        if let Item::X509Certificate(der) = item {
-            Some(Certificate(der.to_vec()))
-        } else {
-            None
-        }
-    }).collect();
-
-    Ok(certs)
+    // 3) done
+    Ok(raw_certs)
 }
 
 // load a pkcs8 private key from a PEM file (expect one key exactly)
-pub fn load_key(path: &str) -> Result<PrivateKey> {
-    let file = File::open(path)
-        .with_context(|| format!("opening key file `{}`", path))?;
-    let mut rd = BufReader::new(file);
-
-    let mut keys = Vec::<Vec<u8>>::new();
+pub fn load_key(path: &str) -> Result<PrivateKeyDer<'static>> {
+    let mut rd = BufReader::new(File::open(path)
+        .with_context(|| format!("opening key file `{}`", path))?);
 
     loop {
-        match read_one(&mut rd).context("reading PEM block")? {
-            Some(Item::Pkcs8Key(der)) => {
-                keys.push(der.secret_pkcs8_der().to_vec());
-            }
-            Some(_) => continue, // skip other stuff
-            None => break,
+        match read_one(&mut rd)
+            .context("reading PEM block")?
+        {
+            Some(Item::Pkcs8Key(key)) => return Ok(PrivateKeyDer::from(key)),
+            Some(Item::Sec1Key(key))  => return Ok(PrivateKeyDer::from(key)),
+            Some(_)                   => continue,
+            None                      => break,
         }
     }
-
-    if keys.len() != 1 {
-        bail!("expected exactly one PKCS#8 key in `{}`", path);
-    }
-    Ok(PrivateKey(keys.remove(0)))
+    anyhow::bail!("no private key found in `{}`", path);
 }
-
 // load and add CA certs to a rustls RootCertStore from PEM
 pub fn load_ca(path: &str) -> Result<RootCertStore> {
-    let file = File::open(path)
-        .with_context(|| format!("opening CA file `{}`", path))?;
-    let mut rd = BufReader::new(file);
-
-    let items: Vec<Item> = read_all(&mut rd)
-        .collect::<std::result::Result<_, _>>()
-        .context("reading PEM items from CA file")?;
+    let mut rd = BufReader::new(File::open(path)
+        .with_context(|| format!("opening CA file `{}`", path))?);
 
     let mut store = RootCertStore::empty();
-    for item in items {
-        if let Item::X509Certificate(der) = item {
-            store
-                .add(&Certificate(der.to_vec()))
-                .context("adding a CA certificate to the root store")?;
+    loop {
+        match read_one(&mut rd)
+            .context("reading PEM block")?
+        {
+            Some(Item::X509Certificate(der)) => {
+                store.add_parsable_certificates(std::iter::once(CertificateDer::from(der)));
+            }
+            Some(_) => continue,
+            None    => break,
         }
     }
     Ok(store)
@@ -79,13 +62,12 @@ pub fn load_ca(path: &str) -> Result<RootCertStore> {
 
 pub fn json_to_fr(v: &serde_json::Value) -> anyhow::Result<ark_bn254::Fr> {
     use ark_ff::PrimeField;
-    // turn basic JSON types into a byte‐string
     let s = match v {
         serde_json::Value::String(s) => s.clone(),
         serde_json::Value::Number(n) => n.to_string(),
         serde_json::Value::Bool(b)   => b.to_string(),
         other                        => serde_json::to_string(other)?,
     };
-    // little‐endian mod‐order reduction
+    
     Ok(ark_bn254::Fr::from_le_bytes_mod_order(s.as_bytes()))
 }

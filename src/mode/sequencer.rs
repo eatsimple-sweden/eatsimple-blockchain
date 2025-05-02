@@ -16,13 +16,12 @@ use std::{
 use anyhow::Context;
 use axum::{routing::post, Router};
 use axum_server::tls_rustls::RustlsConfig;
-use rustls::{
-    Certificate, PrivateKey,
-    ServerConfig as RustlsServerConfig,
-};
 use tokio::sync::mpsc;
-use tonic::transport::{ServerTlsConfig, Identity, Certificate as TonicTransportCertificate};
+use tonic::transport::{ServerTlsConfig, Identity, Certificate};
 use sqlx::PgPool;
+use rustls::{
+    ServerConfig,
+};
 
 pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
     println!("[Sequencer] Starting setup...");
@@ -30,20 +29,16 @@ pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
     // --------------------------------------------------------------
     //  Build a config WITHOUT client-auth for HTTPS
     // --------------------------------------------------------------
-    let public_tls = {
-        let certs:  Vec<Certificate> = load_certs(&cfg.https_cert)?;
-        let key:    PrivateKey       = load_key(&cfg.https_key)?;
-    
-        let scfg = RustlsServerConfig::builder()
-            .with_safe_defaults()
-            .with_no_client_auth()              // no mTLS here
-            .with_single_cert(certs, key)
-            .context("public TLS config")?;
-    
-        RustlsConfig::from_config(Arc::new(scfg))
-    };
-    
+    let certs = load_certs(&cfg.https_cert)?;
+    let key   = load_key(&cfg.https_key)?;
 
+    let scfg = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .context("public TLS config")?; 
+    
+    let public_tls = RustlsConfig::from_config(Arc::new(scfg));
+    
     // --------------------------------------------------------------
     //  Build a config WITH client-auth for gRPC
     // --------------------------------------------------------------
@@ -54,8 +49,7 @@ pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
     let db = PgPool::connect(&cfg.database_url).await?;
 
     let server_identity = Identity::from_pem(cert_pem, key_pem);
-
-    let client_ca_root = TonicTransportCertificate::from_pem(ca_pem);
+    let client_ca_root = Certificate::from_pem(ca_pem);
 
     let mtls = ServerTlsConfig::new()
         .identity(server_identity)
