@@ -96,7 +96,7 @@ pub async fn batch_loop(
             tracing::info!(
                 height = h_cur,
                 entries = txs.len(),
-                "flushing {} txs into new block, spawning make_local_header",
+                "flushing txs into new block, spawning make_local_header",
             );
 
             tokio::spawn(async move {
