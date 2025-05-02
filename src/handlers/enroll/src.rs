@@ -86,7 +86,6 @@ pub async fn enroll_handler(
 
     let pubkey = PKey::public_key_from_der(&pubkey_der).map_err(to_http_err)?;
     builder.set_pubkey(&pubkey).map_err(to_http_err)?;
-    // builder.sign(&ca_key, MessageDigest::null()).map_err(to_http_err)?;
     
     let ca_digest = match ca_key.id() {
         PKeyId::ED25519 => MessageDigest::null(),  // Ed25519 - no external hash
