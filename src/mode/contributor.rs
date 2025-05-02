@@ -153,6 +153,24 @@ async fn do_enroll(cfg: &ContributorConfig, dir: &Path) -> Result<()> {
     // ]);
     // spki_der.extend_from_slice(&pub_bytes);
     // let pub_key_b64 = b64.encode(&spki_der);
+
+    let sk_path = file(dir, "node.key");
+    let pk_path = file(dir, "node.pub");
+    if !sk_path.exists() {
+        let sk = SigningKey::generate(&mut OsRng);
+        let pk = VerifyingKey::from(&sk);
+        let sk_bytes = sk.to_bytes();
+        let pk_bytes = pk.to_bytes();
+        // write 32‐byte seed
+        async_fs::write(&sk_path, &sk_bytes)
+            .await
+            .context("persist node.key")?;
+        // write 32‐byte pub
+        async_fs::write(&pk_path, &pk_bytes)
+            .await
+            .context("persist node.pub")?;
+    }
+
     let ec_group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)
         .context("failed to get P-256 curve")?;
     let ec_key: EcKey<openssl::pkey::Private> = if !file(dir, "client.key").exists() {
