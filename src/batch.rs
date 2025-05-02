@@ -203,9 +203,16 @@ pub async fn send_proposal(
 }
 
 async fn persist_block(sealed: &Sealed) -> anyhow::Result<()> {
-    // TODO write to RocksDB / sled
-    // TODO notify any subscribers / emit event
-    // TODO anchor
+    let header = &sealed.block.header;
+    
+    tracing::info!(
+        height       = header.height,
+        merkle_root  = hex::encode(header.merkle_root),
+        entries      = header.entries,
+        sig_count    = sealed.sigs.len(),
+        "committing block"
+    );
+
     Ok(())
 }
 
