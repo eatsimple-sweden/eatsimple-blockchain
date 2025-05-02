@@ -59,7 +59,6 @@ pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
     let state = SequencerAppState { cfg: cfg.clone(), db, tx_ingest };
     tokio::spawn(batch_loop(cfg.clone(), rx_ingest));
 
-
     // --------------------------------------------------------------
     //  start Axum (public) on 0.0.0.0:8443 or 443
     // --------------------------------------------------------------
@@ -72,7 +71,6 @@ pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
     let http_srv = axum_server::bind_rustls(axum_addr, public_tls)
         .serve(axum_app.into_make_service());
 
-
     // --------------------------------------------------------------
     //  start gRPC (private) on 0.0.0.0:50051 with mTLS
     // --------------------------------------------------------------
@@ -82,7 +80,6 @@ pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
         .tls_config(mtls)?                 // << the mTLS config
         .add_service(make_server(state))
         .serve(grpc_addr);
-
 
     // --------------------------------------------------------------
     //  Start server and propagate errors
