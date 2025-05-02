@@ -55,7 +55,7 @@ pub async fn run(cfg: ContributorConfig) -> Result<()> {
     // check if we already have everything for state -> nothing to do
     // ------------------------------------------------------------------
     let is_enrolled = || {
-        ["node.key", "node.pub", "seq.crt", "ca.pem", "aes.key", "det.key", "node.json"]
+        ["aes.key", "ca.pem", "client.key", "client.pem", "det.key", "node.json", "node.key", "node.pub"]
             .iter()
             .all(|f| file(&dir, f).exists())
     };
