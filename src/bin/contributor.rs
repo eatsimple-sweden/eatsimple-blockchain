@@ -11,9 +11,9 @@ async fn main() -> Result<()> {
     }
     tracing_subscriber::fmt::init();
 
-    rustls::crypto::aws_lc_rs::default_provider()
+    rustls::crypto::ring::default_provider()
         .install_default()
-        .expect("failed to install default crypto provider");
+        .expect("install ring provider");
     
     mode::contributor::run(contributor_cfg).await
 }
