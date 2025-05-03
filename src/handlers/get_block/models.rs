@@ -1,5 +1,5 @@
 use crate::block::{Block, BlockHeader};
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 
 #[derive(Serialize)]
 pub struct BlockResponse {
@@ -16,4 +16,9 @@ impl From<Block> for BlockResponse {
             .collect();
         BlockResponse { header: b.header, txs }
     }
+}
+
+#[derive(Deserialize)]
+pub struct BlockParams {
+    pub height: u64,
 }

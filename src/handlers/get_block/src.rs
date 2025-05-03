@@ -2,16 +2,16 @@ use crate::{
     config::{SequencerAppState},
     block::decode_block,
 };
-use super::models::{BlockResponse};
+use super::models::{BlockResponse, BlockParams};
 use axum::{
     Json,
-    extract::{State, Path},
+    extract::{State, Query},
     http::StatusCode,
 };
 
 pub async fn get_block_handler(
     State(state): State<SequencerAppState>,
-    Path(height): Path<u64>,
+    Query(params): Query<BlockParams>,
 ) -> Result<Json<BlockResponse>, (StatusCode, String)> {
     let tree = state
         .block_db
@@ -19,9 +19,9 @@ pub async fn get_block_handler(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let raw = tree
-        .get(&height.to_be_bytes())
+        .get(&params.height.to_be_bytes())
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or((StatusCode::NOT_FOUND, format!("block {} not found", height)))?;
+        .ok_or((StatusCode::NOT_FOUND, format!("block {} not found", params.height)))?;
 
     let blk = decode_block(&raw)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

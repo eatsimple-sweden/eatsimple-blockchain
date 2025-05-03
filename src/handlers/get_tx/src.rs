@@ -2,10 +2,10 @@ use crate::{
     config::{SequencerAppState},
     block::decode_block,
 };
-use super::models::{TxView};
+use super::models::{TxView, TxParams};
 use axum::{
     Json,
-    extract::{State, Path},
+    extract::{State, Query},
     http::StatusCode,
 };
 
@@ -14,9 +14,9 @@ use axum::{
 // For now we scan every block (inefficient af) until you we get it
 pub async fn get_tx_handler(
     State(state): State<SequencerAppState>,
-    Path(signature_hex): Path<String>,
+    Query(params): Query<TxParams>,
 ) -> Result<Json<TxView>, (StatusCode, String)> {
-    let sig = hex::decode(&signature_hex)
+    let sig = hex::decode(&params.signature_hex)
         .map_err(|_| (StatusCode::BAD_REQUEST, "bad hex".into()))?;
 
     let tree = state.block_db.open_tree("chain").unwrap();

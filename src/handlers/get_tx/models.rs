@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use base64::prelude::*;
 
 #[derive(Serialize)]
@@ -10,6 +10,11 @@ pub struct TxView {
     pub cipher_hash:  String,             // hex(ciper_hash)
     pub index_tokens: Vec<String>,        // hex each token
     pub signature:    String,             // base64(signature)
+}
+
+#[derive(Deserialize)]
+pub struct TxParams {
+    pub signature_hex: String,
 }
 
 impl TryFrom<crate::pb::TxRequest> for TxView {
