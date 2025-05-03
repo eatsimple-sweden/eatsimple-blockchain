@@ -186,7 +186,7 @@ async fn do_enroll(cfg: &ContributorConfig, dir: &Path) -> Result<()> {
     let client = Client::builder()
         .timeout(std::time::Duration::from_millis(cfg.max_retry_ms))
         .build()?;
-    let url = format!("https://{}/enroll", cfg.sequencer_http_domain);
+    let url = format!("https://{}/api/enroll", cfg.sequencer_http_domain);
     let resp: EnrollResp = client
         .post(&url)
         .json(&req)

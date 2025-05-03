@@ -6,6 +6,10 @@ use blake3::Hasher;
 use bincode::config::standard;
 use bincode::serde::encode_to_vec;
 use serde::{Deserialize, Serialize};
+use anyhow::{anyhow, Result, Context};
+use byteorder::{BigEndian, ReadBytesExt};
+use prost::Message;
+use std::io::{Cursor, Read};
 
 // Merkle tree over `blake3(tx_serialised)` leaves.
 // Returns (root, vec<leaf_hashes>)
@@ -18,17 +22,11 @@ pub fn merkle_root(leaves: &[TxRequest]) -> ([u8;32], Vec<[u8;32]>) {
     let mut level: Vec<[u8; 32]> = leaves.iter().map(|tx| {
         let mut h = Hasher::new();
 
-        // 1) who and when
         h.update(tx.node_uuid.as_bytes());
         h.update(&tx.timestamp_ms.to_be_bytes());
-
-        // 2) the public payload
         h.update(&tx.public_json);
-
-        // 3) the ciphertext commitment
         h.update(&tx.cipher_hash);
 
-        // 4) any index tokens
         for token in &tx.index_tokens {
             h.update(token);
         }
@@ -84,4 +82,39 @@ impl From<&BlockHeader> for PbHeader {      // for sending block header
             entries:      h.entries,
         }
     }
+}
+
+pub fn decode_block(buf: &[u8]) -> anyhow::Result<Block> {
+    let mut cur = Cursor::new(buf);
+
+    let height       = cur.read_u64::<BigEndian>()?;
+    let mut prev_hash = [0; 32];
+    cur.read_exact(&mut prev_hash)?;
+    let mut merkle    = [0; 32];
+    cur.read_exact(&mut merkle)?;
+    let timestamp_ms = cur.read_i64::<BigEndian>()?;
+    let entries      = cur.read_u32::<BigEndian>()?;
+
+    let mut txs = Vec::with_capacity(entries as usize);
+    for _ in 0..entries {
+        let len = cur.read_u32::<BigEndian>()? as usize;
+        let start = cur.position() as usize;
+        let end   = start + len;
+        let slice = &cur.get_ref()[start..end];
+        let tx = TxRequest::decode(slice)
+            .context("prost decode TxRequest")?;
+        txs.push(tx);
+        cur.set_position(end as u64);
+    }
+
+    Ok(Block {
+        header: BlockHeader {
+            height,
+            prev_hash,
+            merkle_root: merkle,
+            timestamp_ms,
+            entries,
+        },
+        txs,
+    })
 }

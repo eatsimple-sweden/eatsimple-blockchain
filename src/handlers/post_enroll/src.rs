@@ -25,7 +25,7 @@ fn to_http_err<E: std::fmt::Display>(e: E) -> (StatusCode, Json<Value>) {
 
 type EnrollResult = Result<(StatusCode, Json<EnrollResp>), (StatusCode, Json<Value>)>;
 
-pub async fn enroll_handler(
+pub async fn post_enroll_handler(
     State(state): State<SequencerAppState>,
     Json(req): Json<EnrollReq>,
 ) -> EnrollResult {
