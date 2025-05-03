@@ -10,41 +10,27 @@ use prost::Message;
 use anyhow::Context;
 use sled::Db;
 use byteorder::{BigEndian, ByteOrder};
+use bincode::{
+    config::standard,
+    serde::encode_to_vec,
+};
 
-pub async fn persist_block(sealed: &Sealed, block_db: &sled::Db) -> anyhow::Result<()> {
-    let header = &sealed.block.header;
-
+pub async fn persist_block(sealed: &Sealed, db: &sled::Db) -> anyhow::Result<()> {
+    let blk = &sealed.block;
+    
     tracing::info!(
-        height      = header.height,
-        merkle_root = hex::encode(header.merkle_root),
-        entries     = header.entries,
-        sig_count   = sealed.sigs.len(),
+        height       = blk.header.height,
+        merkle_root  = %hex::encode(blk.header.merkle_root),
+        entries      = blk.header.entries,
+        sig_count    = sealed.sigs.len(),
         "committing block"
     );
 
-    let mut buf = Vec::new();
-
-    // serialize header fields by hand
-    buf.extend_from_slice(&header.height.to_be_bytes());
-    buf.extend_from_slice(&header.prev_hash);
-    buf.extend_from_slice(&header.merkle_root);
-    buf.extend_from_slice(&header.timestamp_ms.to_be_bytes());
-    buf.extend_from_slice(&header.entries.to_be_bytes());
-
-    // serialize each TxRequest via prost
-    for tx in &sealed.block.txs {
-        let mut tx_buf = Vec::new();
-        tx.encode(&mut tx_buf)
-            .context("prost encode TxRequest")?;
-        let len = (tx_buf.len() as u32).to_be_bytes();
-        buf.extend_from_slice(&len);
-        buf.extend_from_slice(&tx_buf);
-    }
-
-    // insert into sled keyed by block‐height
-    let key = header.height.to_be_bytes();
-    block_db.insert(key, buf)?;
-    block_db.flush()?; // make sure it hits disk
+    // bincode-encode the entire structure
+    let val = encode_to_vec(blk, standard())?;
+    db.open_tree("chain")?
+        .insert(blk.header.height.to_be_bytes(), val)?;
+    db.flush()?;
 
     Ok(())
 }

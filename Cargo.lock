@@ -979,6 +979,7 @@ dependencies = [
  "openssl",
  "pkcs8",
  "prost",
+ "prost-types",
  "rand",
  "rcgen",
  "reqwest",

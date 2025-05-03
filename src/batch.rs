@@ -51,27 +51,24 @@ pub async fn batch_loop(
         .open_tree("chain")
         .context("opening sled tree `chain`")?;
 
-    let last_opt = chain.last()
-        .context("reading last block from sled")?;
-    
-    let (mut next_height, mut prev_hash) = if let Some((key_bytes, val_bytes)) = last_opt {
-        let height = BigEndian::read_u64(&key_bytes);
-    
-        let (last_block, _): (Block, _) =
-            decode_from_slice(&val_bytes, standard())
-            .context("decoding last block from sled")?;
-    
-        let prev = hash_header(&last_block.header);
-        tracing::info!(
-            tip_height = height,
-            merkle_root = %hex::encode(last_block.header.merkle_root),
-            "loaded chain tip from sled"
-        );
-    
-        (height, prev)
-    } else {
-        tracing::warn!("chain tree empty — defaulting to tip=0");
-        (0, [0u8; 32])
+    let (mut next_height, mut prev_hash) = match chain.last()? {
+        Some((key_bytes, val_bytes)) => {
+            let height = BigEndian::read_u64(&key_bytes);
+            let (blk, _) = decode_from_slice::<Block, _>(&val_bytes, standard())
+                .context("decoding last block from sled")?;
+            let h = hash_header(&blk.header);
+
+            tracing::info!(
+                tip_height=height,
+                merkle_root=%hex::encode(blk.header.merkle_root),
+                "loaded chain tip from sled"
+            );
+            (height, h)
+        }
+        None => {
+            tracing::warn!("chain empty, defaulting to tip=0");
+            (0, [0u8; 32])
+        }
     };
 
     // ----------------------------------------------------------
