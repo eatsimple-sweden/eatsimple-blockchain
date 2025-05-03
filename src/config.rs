@@ -27,7 +27,7 @@ pub struct SequencerConfig {
 
     pub ca_root: String,                    // "/etc/mychain/ca.pem"
     pub ca_key:  String,                    // path to CA private key (PEM)
-    pub rocksdb_path: String,               // "/var/lib/mychain/blocks"
+    pub block_db_dir: String,               // "/var/lib/mychain/blocks"
     pub max_block_entries: usize,           // ex 100
     pub max_block_age_ms: u64,              // ex 200
     pub anchor_interval: u64,               // ex 1000

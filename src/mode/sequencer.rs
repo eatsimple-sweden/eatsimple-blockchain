@@ -5,7 +5,7 @@ use crate::{
     pb::{TxRequest},
     handlers::enroll::src::enroll_handler,
     utils::{
-        load_certs, load_key,
+        load_certs, load_key, init_genesis,
     },
 };
 
@@ -22,9 +22,18 @@ use sqlx::PgPool;
 use rustls::{
     ServerConfig,
 };
+use sled::Db;
 
 pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
     println!("[Sequencer] Starting setup...");
+
+    // --------------------------------------------------------------
+    //  Init Sled DB
+    // --------------------------------------------------------------
+    let block_db: Db = sled::open(&cfg.block_db_dir)
+        .context("opening sled database")?;
+
+    init_genesis(&block_db).context("initialising genesis block")?;
 
     // --------------------------------------------------------------
     //  Build a config WITHOUT client-auth for HTTPS
@@ -57,7 +66,7 @@ pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
 
     let (tx_ingest, rx_ingest) = mpsc::channel::<TxRequest>(10_000);
     let state = SequencerAppState { cfg: cfg.clone(), db, tx_ingest };
-    tokio::spawn(batch_loop(cfg.clone(), rx_ingest));
+    tokio::spawn(batch_loop(cfg.clone(), rx_ingest, block_db));
 
     // --------------------------------------------------------------
     //  start Axum (public) on 0.0.0.0:8443 or 443

@@ -27,6 +27,7 @@ use openssl::{
     sign::Signer,
 };
 use tracing::{info, warn, debug, error, info_span, Instrument};
+use prost::Message; 
 
 // frequency we check the buffer for flush conditions
 const TICK_MS: u64 = 50;
@@ -34,6 +35,7 @@ const TICK_MS: u64 = 50;
 pub async fn batch_loop(
     cfg: SequencerConfig,
     mut rx: Receiver<TxRequest>,
+    block_db: sled::Db,
 ) -> anyhow::Result<()> {
     let cfg = Arc::new(cfg); // shared – cheap to clone
 
@@ -80,7 +82,7 @@ pub async fn batch_loop(
                 commit_q.insert(h, sealed);
 
                 while let Some(sealed) = commit_q.remove(&(next_height + 1)) { // while a proposal task is running, no other task will ever be started for the same height
-                    persist_block(&sealed).await?;
+                    persist_block(&sealed, &block_db).await?;
                     next_height += 1;
                     prev_hash    = hash_header(&sealed.block.header);
                 }
@@ -100,32 +102,19 @@ pub async fn batch_loop(
                 "flushing txs into new block, spawning make_local_header",
             );
 
-            // tokio::spawn(async move {
-            //     if let Ok((block, my_sig)) = make_local_header(txs, h_cur, p_hash, &cfg_cloned) {
-            //         if let Ok(sigs) = collect_witness_sigs(block.header.clone(), my_sig, &cfg_cloned).await {
-            //             let _ = seal_tx_cloned.send(Sealed { block, sigs }).await;
-            //         } else {
-            //             tracing::warn!(height = h_cur, "quorum not reached – block dropped");
-            //         }
-            //     }
-            // });
-
             tokio::spawn({
                 let span = info_span!("seal_task", height = h_cur);
                 async move {
                     let res = async {
-                        // ① build header & local sig
                         let (block, my_sig) =
                             make_local_header(txs, h_cur, p_hash, &cfg_cloned)
                                 .context("make_local_header")?;
             
-                        // ② gather witness sigs (maybe skipped)
                         let sigs =
                             collect_witness_sigs(block.header.clone(), my_sig, &cfg_cloned)
                                 .await
                                 .context("collect_witness_sigs")?;
             
-                        // ③ deliver it back to the main loop
                         seal_tx_cloned
                             .send(Sealed { block, sigs })
                             .await
@@ -137,7 +126,6 @@ pub async fn batch_loop(
                     .await;
             
                     if let Err(e) = res {
-                        // every failure path ends up here with a clear reason
                         warn!("seal task aborted: {e:#}");
                     } else {
                         debug!("seal task finished and queued for commit");
@@ -238,16 +226,41 @@ pub async fn send_proposal(
     Ok((resp.node_uuid, resp.signature))
 }
 
-async fn persist_block(sealed: &Sealed) -> anyhow::Result<()> {
+async fn persist_block(sealed: &Sealed, block_db: &sled::Db) -> anyhow::Result<()> {
     let header = &sealed.block.header;
-    
+
+    // 1) Log it
     tracing::info!(
-        height       = header.height,
-        merkle_root  = hex::encode(header.merkle_root),
-        entries      = header.entries,
-        sig_count    = sealed.sigs.len(),
+        height      = header.height,
+        merkle_root = hex::encode(header.merkle_root),
+        entries     = header.entries,
+        sig_count   = sealed.sigs.len(),
         "committing block"
     );
+
+    let mut buf = Vec::new();
+
+    // serialize header fields by hand
+    buf.extend_from_slice(&header.height.to_be_bytes());
+    buf.extend_from_slice(&header.prev_hash);
+    buf.extend_from_slice(&header.merkle_root);
+    buf.extend_from_slice(&header.timestamp_ms.to_be_bytes());
+    buf.extend_from_slice(&header.entries.to_be_bytes());
+
+    // serialize each TxRequest via prost
+    for tx in &sealed.block.txs {
+        let mut tx_buf = Vec::new();
+        tx.encode(&mut tx_buf)
+            .context("prost encode TxRequest")?;
+        let len = (tx_buf.len() as u32).to_be_bytes();
+        buf.extend_from_slice(&len);
+        buf.extend_from_slice(&tx_buf);
+    }
+
+    // 3) Insert into sled keyed by block‐height
+    let key = header.height.to_be_bytes();
+    block_db.insert(key, buf)?;
+    block_db.flush()?; // make sure it hits disk
 
     Ok(())
 }
