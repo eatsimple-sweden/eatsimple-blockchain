@@ -26,6 +26,7 @@ use openssl::{
     pkey::PKey,
     sign::Signer,
 };
+use tracing::{info, warn, debug, error, info_span, Instrument};
 
 // frequency we check the buffer for flush conditions
 const TICK_MS: u64 = 50;
@@ -99,12 +100,47 @@ pub async fn batch_loop(
                 "flushing txs into new block, spawning make_local_header",
             );
 
-            tokio::spawn(async move {
-                if let Ok((block, my_sig)) = make_local_header(txs, h_cur, p_hash, &cfg_cloned) {
-                    if let Ok(sigs) = collect_witness_sigs(block.header.clone(), my_sig, &cfg_cloned).await {
-                        let _ = seal_tx_cloned.send(Sealed { block, sigs }).await;
+            // tokio::spawn(async move {
+            //     if let Ok((block, my_sig)) = make_local_header(txs, h_cur, p_hash, &cfg_cloned) {
+            //         if let Ok(sigs) = collect_witness_sigs(block.header.clone(), my_sig, &cfg_cloned).await {
+            //             let _ = seal_tx_cloned.send(Sealed { block, sigs }).await;
+            //         } else {
+            //             tracing::warn!(height = h_cur, "quorum not reached – block dropped");
+            //         }
+            //     }
+            // });
+
+            tokio::spawn({
+                let span = info_span!("seal_task", height = h_cur);
+                async move {
+                    let res = async {
+                        // ① build header & local sig
+                        let (block, my_sig) =
+                            make_local_header(txs, h_cur, p_hash, &cfg_cloned)
+                                .context("make_local_header")?;
+            
+                        // ② gather witness sigs (maybe skipped)
+                        let sigs =
+                            collect_witness_sigs(block.header.clone(), my_sig, &cfg_cloned)
+                                .await
+                                .context("collect_witness_sigs")?;
+            
+                        // ③ deliver it back to the main loop
+                        seal_tx_cloned
+                            .send(Sealed { block, sigs })
+                            .await
+                            .context("seal_tx send")?;
+            
+                        Ok::<_, anyhow::Error>(())
+                    }
+                    .instrument(span)
+                    .await;
+            
+                    if let Err(e) = res {
+                        // every failure path ends up here with a clear reason
+                        warn!("seal task aborted: {e:#}");
                     } else {
-                        tracing::warn!(height = h_cur, "quorum not reached – block dropped");
+                        debug!("seal task finished and queued for commit");
                     }
                 }
             });
