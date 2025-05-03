@@ -1,20 +1,19 @@
 use crate::block::{Block, BlockHeader};
 use serde::{Serialize, Deserialize};
+use crate::handlers::get_tx::models::TxView;
 
 #[derive(Serialize)]
 pub struct BlockResponse {
     pub header: BlockHeader,
-    pub txs: Vec<serde_json::Value>,
+    pub txs: Vec<TxView>,
 }
 
 impl From<Block> for BlockResponse {
-    fn from(b: Block) -> Self {
-        let txs = b.txs.into_iter()
-            .map(|tx| {
-                serde_json::from_slice(&tx.public_json).unwrap_or_default()
-            })
-            .collect();
-        BlockResponse { header: b.header, txs }
+    fn from(b: crate::block::Block) -> Self {
+        BlockResponse {
+            header: b.header,
+            txs:    b.txs.into_iter().map(Into::into).collect(),
+        }
     }
 }
 

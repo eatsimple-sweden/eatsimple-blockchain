@@ -13,24 +13,24 @@ pub struct TxView {
     pub signature:    String,             // base64(signature)
 }
 
-#[derive(Deserialize)]
-pub struct TxParams {
-    pub signature_hex: String,
-}
+impl From<crate::pb::TxRequest> for TxView {
+    fn from(tx: crate::pb::TxRequest) -> Self {
+        let public = serde_json::from_slice(&tx.public_json)
+            .unwrap_or_else(|_| serde_json::json!({}));
 
-impl TryFrom<crate::pb::TxRequest> for TxView {
-    type Error = anyhow::Error;
-
-    fn try_from(tx: crate::pb::TxRequest) -> anyhow::Result<Self> {
-        Ok(Self {
+        TxView {
             node_uuid:    tx.node_uuid,
             timestamp_ms: tx.timestamp_ms,
-            public:       serde_json::from_slice(&tx.public_json)
-                             .context("public_json is not valid JSON")?,
+            public,
             ciphertext:   BASE64_STANDARD.encode(&tx.cipher_bytes),
             cipher_hash:  hex::encode(tx.cipher_hash),
             index_tokens: tx.index_tokens.into_iter().map(hex::encode).collect(),
             signature:    BASE64_STANDARD.encode(&tx.signature),
-        })
+        }
     }
+}
+
+#[derive(Deserialize)]
+pub struct TxParams {
+    pub signature_hex: String,
 }
