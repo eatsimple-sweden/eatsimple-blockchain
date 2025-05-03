@@ -1,6 +1,6 @@
 use crate::{
     config::ContributorConfig,
-    handlers::enroll::models::{EnrollReq, EnrollResp},
+    handlers::post_enroll::models::{EnrollReq, EnrollResp},
     crypto::prepare_tx,
     grpc::send_tx,
 };

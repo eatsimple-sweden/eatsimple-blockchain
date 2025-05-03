@@ -76,7 +76,7 @@ pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
 
     let (tx_ingest, rx_ingest) = mpsc::channel::<TxRequest>(10_000);
     let state = SequencerAppState { cfg: cfg.clone(), db, block_db, tx_ingest };
-    tokio::spawn(batch_loop(cfg.clone(), rx_ingest, block_db));
+    tokio::spawn(batch_loop(cfg.clone(), rx_ingest, block_db.clone()));
 
     // --------------------------------------------------------------
     //  start Axum (public) on 0.0.0.0:8443 or 443
