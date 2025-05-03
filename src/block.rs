@@ -85,16 +85,21 @@ impl From<&BlockHeader> for PbHeader {      // for sending block header
 }
 
 const MAX_TX_BYTES: usize = 1 * 1024 * 1024;
+const MAX_BLOCK_ENTRIES: usize = 1000;
 pub fn decode_block(buf: &[u8]) -> anyhow::Result<Block> {
     let mut cur = Cursor::new(buf);
 
-    let height       = cur.read_u64::<BigEndian>()?;
-    let mut prev_hash = [0; 32];
+    let height          = cur.read_u64::<BigEndian>()?;
+    let mut prev_hash   = [0; 32];
     cur.read_exact(&mut prev_hash)?;
-    let mut merkle    = [0; 32];
+    let mut merkle      = [0; 32];
     cur.read_exact(&mut merkle)?;
-    let timestamp_ms = cur.read_i64::<BigEndian>()?;
-    let entries      = cur.read_u32::<BigEndian>()?;
+    let timestamp_ms    = cur.read_i64::<BigEndian>()?;
+    let entries         = cur.read_u32::<BigEndian>()? as usize;
+
+    if entries == 0 || entries > MAX_BLOCK_ENTRIES {
+        bail!("invalid block: entries={entries} (cap {MAX_BLOCK_ENTRIES})");
+    }
 
     let mut txs = Vec::with_capacity(entries as usize);
     for _ in 0..entries {
@@ -123,7 +128,7 @@ pub fn decode_block(buf: &[u8]) -> anyhow::Result<Block> {
             prev_hash,
             merkle_root: merkle,
             timestamp_ms,
-            entries,
+            entries: entries as u32,
         },
         txs,
     })

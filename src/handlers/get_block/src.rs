@@ -26,6 +26,5 @@ pub async fn get_block_handler(
     let blk = decode_block(&raw)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    // assume you have `impl From<Block> for BlockResponse`
     Ok(Json(BlockResponse::from(blk)))
 }
