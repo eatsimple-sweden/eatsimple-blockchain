@@ -6,7 +6,7 @@ use blake3::Hasher;
 use bincode::config::standard;
 use bincode::serde::encode_to_vec;
 use serde::{Deserialize, Serialize};
-use anyhow::{anyhow, Result, Context};
+use anyhow::{anyhow, Result, Context, bail};
 use byteorder::{BigEndian, ReadBytesExt};
 use prost::Message;
 use std::io::{Cursor, Read};
@@ -84,6 +84,7 @@ impl From<&BlockHeader> for PbHeader {      // for sending block header
     }
 }
 
+const MAX_TX_BYTES: usize = 1 * 1024 * 1024;
 pub fn decode_block(buf: &[u8]) -> anyhow::Result<Block> {
     let mut cur = Cursor::new(buf);
 
@@ -98,11 +99,20 @@ pub fn decode_block(buf: &[u8]) -> anyhow::Result<Block> {
     let mut txs = Vec::with_capacity(entries as usize);
     for _ in 0..entries {
         let len = cur.read_u32::<BigEndian>()? as usize;
+
+        // sanity-check the length -------------------------
+        if len == 0 || len > MAX_TX_BYTES {
+            bail!("invalid Tx length {len} B (cap {MAX_TX_BYTES} B)");
+        }
         let start = cur.position() as usize;
-        let end   = start + len;
-        let slice = &cur.get_ref()[start..end];
+        let end   = start.checked_add(len)
+            .filter(|&e| e <= buf.len())
+            .context("Tx length exceeds block buffer")?;
+
+        let slice = &buf[start..end];
         let tx = TxRequest::decode(slice)
             .context("prost decode TxRequest")?;
+
         txs.push(tx);
         cur.set_position(end as u64);
     }

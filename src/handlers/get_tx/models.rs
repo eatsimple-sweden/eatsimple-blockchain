@@ -1,5 +1,6 @@
 use serde::{Serialize, Deserialize};
 use base64::prelude::*;
+use anyhow::Context;
 
 #[derive(Serialize)]
 pub struct TxView {
@@ -20,17 +21,15 @@ pub struct TxParams {
 impl TryFrom<crate::pb::TxRequest> for TxView {
     type Error = anyhow::Error;
 
-    fn try_from(tx: crate::pb::TxRequest) -> Result<Self, Self::Error> {
-        Ok(TxView {
+    fn try_from(tx: crate::pb::TxRequest) -> anyhow::Result<Self> {
+        Ok(Self {
             node_uuid:    tx.node_uuid,
             timestamp_ms: tx.timestamp_ms,
-            public:       serde_json::from_slice(&tx.public_json)?,
+            public:       serde_json::from_slice(&tx.public_json)
+                             .context("public_json is not valid JSON")?,
             ciphertext:   BASE64_STANDARD.encode(&tx.cipher_bytes),
-            cipher_hash:  hex::encode(&tx.cipher_hash),
-            index_tokens: tx.index_tokens
-                              .into_iter()
-                              .map(hex::encode)
-                              .collect(),
+            cipher_hash:  hex::encode(tx.cipher_hash),
+            index_tokens: tx.index_tokens.into_iter().map(hex::encode).collect(),
             signature:    BASE64_STANDARD.encode(&tx.signature),
         })
     }
