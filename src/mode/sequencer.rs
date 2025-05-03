@@ -5,8 +5,9 @@ use crate::{
     pb::{TxRequest},
     handlers::enroll::src::enroll_handler,
     utils::{
-        load_certs, load_key, init_genesis,
+        load_certs, load_key,
     },
+    storage::init_genesis,
 };
 
 use std::{

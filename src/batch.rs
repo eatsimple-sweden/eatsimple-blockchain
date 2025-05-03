@@ -7,6 +7,7 @@ use crate::{
         BlockProposal,
         ProposeResponse,
     },
+    storage::persist_block,
 };
 use anyhow::{Result, Context};
 use std::{
@@ -26,8 +27,12 @@ use openssl::{
     pkey::PKey,
     sign::Signer,
 };
-use tracing::{info, warn, debug, error, info_span, Instrument};
-use prost::Message; 
+use tracing::{warn, debug, info_span, Instrument};
+use byteorder::{ByteOrder, BigEndian};
+use bincode::{
+    serde::decode_from_slice,
+    config::standard,
+};
 
 // frequency we check the buffer for flush conditions
 const TICK_MS: u64 = 50;
@@ -40,11 +45,34 @@ pub async fn batch_loop(
     let cfg = Arc::new(cfg); // shared – cheap to clone
 
     // ----------------------------------------------------------
-    //  live “tip” of the chain (already committed)
-    //  (-> load from DB on real startup)
+    //  init chain info
     // ----------------------------------------------------------
-    let mut next_height: u64      = 0;
-    let mut prev_hash:   [u8; 32] = [0; 32];
+    let chain = block_db
+        .open_tree("chain")
+        .context("opening sled tree `chain`")?;
+
+    let last_opt = chain.last()
+        .context("reading last block from sled")?;
+    
+    let (mut next_height, mut prev_hash) = if let Some((key_bytes, val_bytes)) = last_opt {
+        let height = BigEndian::read_u64(&key_bytes);
+    
+        let (last_block, _): (Block, _) =
+            decode_from_slice(&val_bytes, standard())
+            .context("decoding last block from sled")?;
+    
+        let prev = hash_header(&last_block.header);
+        tracing::info!(
+            tip_height = height,
+            merkle_root = %hex::encode(last_block.header.merkle_root),
+            "loaded chain tip from sled"
+        );
+    
+        (height, prev)
+    } else {
+        tracing::warn!("chain tree empty — defaulting to tip=0");
+        (0, [0u8; 32])
+    };
 
     // ----------------------------------------------------------
     //  current building buffer
@@ -71,7 +99,7 @@ pub async fn batch_loop(
 
     loop {
         tokio::select! {
-            Some(tx) = rx.recv() => {
+            Some(tx) = rx.recv() => {                               // ingest task passed us a new Tx
                 if buffer.is_empty() {
                     started_at = Instant::now();
                 }
@@ -229,45 +257,6 @@ pub async fn send_proposal(
     Ok((resp.node_uuid, resp.signature))
 }
 
-async fn persist_block(sealed: &Sealed, block_db: &sled::Db) -> anyhow::Result<()> {
-    let header = &sealed.block.header;
-
-    // 1) Log it
-    tracing::info!(
-        height      = header.height,
-        merkle_root = hex::encode(header.merkle_root),
-        entries     = header.entries,
-        sig_count   = sealed.sigs.len(),
-        "committing block"
-    );
-
-    let mut buf = Vec::new();
-
-    // serialize header fields by hand
-    buf.extend_from_slice(&header.height.to_be_bytes());
-    buf.extend_from_slice(&header.prev_hash);
-    buf.extend_from_slice(&header.merkle_root);
-    buf.extend_from_slice(&header.timestamp_ms.to_be_bytes());
-    buf.extend_from_slice(&header.entries.to_be_bytes());
-
-    // serialize each TxRequest via prost
-    for tx in &sealed.block.txs {
-        let mut tx_buf = Vec::new();
-        tx.encode(&mut tx_buf)
-            .context("prost encode TxRequest")?;
-        let len = (tx_buf.len() as u32).to_be_bytes();
-        buf.extend_from_slice(&len);
-        buf.extend_from_slice(&tx_buf);
-    }
-
-    // 3) Insert into sled keyed by block‐height
-    let key = header.height.to_be_bytes();
-    block_db.insert(key, buf)?;
-    block_db.flush()?; // make sure it hits disk
-
-    Ok(())
-}
-
 fn sign_with_node_key(msg: &[u8], cfg: &SequencerConfig) -> Result<Vec<u8>> {
     // load Ed25519 private key (PEM) from disk
     let key_pem = std::fs::read(&cfg.grpc_key)
@@ -286,7 +275,7 @@ fn sign_with_node_key(msg: &[u8], cfg: &SequencerConfig) -> Result<Vec<u8>> {
 }
 
 // what comes back from a proposal-task once it reaches quorum
-struct Sealed {
-    block: Block,                    // header + txs
-    sigs:  Vec<(String, Vec<u8>)>,   // who signed what
+pub struct Sealed {
+    pub block: Block,                    // header + txs
+    pub sigs:  Vec<(String, Vec<u8>)>,   // who signed what
 }

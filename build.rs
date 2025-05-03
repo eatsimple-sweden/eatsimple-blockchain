@@ -3,6 +3,10 @@ fn main() {
         tonic_build::configure()
             .build_server(true)      // generate server traits
             .build_client(true)      // generate client stubs (default)
+            .type_attribute(
+                "TxRequest",
+                "#[derive(serde::Serialize, serde::Deserialize)]",
+            )
             .compile_protos(
                 &["proto/transaction.proto"],
                 &["proto"],

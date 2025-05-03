@@ -68,7 +68,7 @@ pub struct BlockHeader {
     pub entries:      u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Block {
     pub header: BlockHeader,
     pub txs:    Vec<TxRequest>,
