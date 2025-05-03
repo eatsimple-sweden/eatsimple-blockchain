@@ -3,7 +3,6 @@ use crate::{
 };
 
 use blake3::Hasher;
-use prost::Message;
 use bincode::config::standard;
 use bincode::serde::encode_to_vec;
 use serde::{Deserialize, Serialize};

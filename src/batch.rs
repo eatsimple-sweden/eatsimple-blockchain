@@ -71,7 +71,10 @@ pub async fn batch_loop(
 
     loop {
         tokio::select! {
-            Some(tx) = rx.recv() => {                               // ingest task passed us a new Tx
+            Some(tx) = rx.recv() => {
+                if buffer.is_empty() {
+                    started_at = Instant::now();
+                }
                 buffer.push(tx);
             }
 
