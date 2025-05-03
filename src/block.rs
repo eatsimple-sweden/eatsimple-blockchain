@@ -3,38 +3,45 @@ use crate::{
 };
 
 use blake3::Hasher;
-use prost::Message;
 use bincode::config::standard;
 use bincode::serde::encode_to_vec;
 use serde::{Deserialize, Serialize};
 
 // Merkle tree over `blake3(tx_serialised)` leaves.
 // Returns (root, vec<leaf_hashes>)
-pub fn merkle_root(leaves: &[TxRequest]) -> ([u8; 32], Vec<[u8; 32]>) {
+pub fn merkle_root(leaves: &[TxRequest]) -> ([u8;32], Vec<[u8;32]>) {
     if leaves.is_empty() {
         return ([0u8; 32], vec![]);
     }
 
-    // hash each leaf via Prost::Message::encode
-    let mut level: Vec<[u8; 32]> = leaves
-        .iter()
-        .map(|tx| {
-            let mut buf = Vec::new();
-            tx.encode(&mut buf)         // Prost encode into a Vec<u8>
-              .expect("prost encode leaf");
-            let mut h = Hasher::new();
-            h.update(&buf);
-            h.finalize().into()
-        })
-        .collect();
+    // produce one 32-byte leaf hash per TxRequest
+    let mut level: Vec<[u8; 32]> = leaves.iter().map(|tx| {
+        let mut h = Hasher::new();
 
-    // pair-wise “hash-up” to root
+        // 1) who and when
+        h.update(tx.node_uuid.as_bytes());
+        h.update(&tx.timestamp_ms.to_be_bytes());
+
+        // 2) the public payload
+        h.update(&tx.public_json);
+
+        // 3) the ciphertext commitment
+        h.update(&tx.cipher_hash);
+
+        // 4) any index tokens
+        for token in &tx.index_tokens {
+            h.update(token);
+        }
+
+        h.finalize().into()
+    }).collect();
+
     while level.len() > 1 {
-        let mut next = Vec::with_capacity((level.len() + 1) / 2);
+        let mut next = Vec::with_capacity((level.len()+1)/2);
         for pair in level.chunks(2) {
             let mut h = Hasher::new();
             h.update(&pair[0]);
-            h.update(if pair.len() == 2 { &pair[1] } else { &pair[0] });
+            h.update(if pair.len()==2 { &pair[1] } else { &pair[0] });
             next.push(h.finalize().into());
         }
         level = next;
@@ -61,7 +68,7 @@ pub struct BlockHeader {
     pub entries:      u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Block {
     pub header: BlockHeader,
     pub txs:    Vec<TxRequest>,

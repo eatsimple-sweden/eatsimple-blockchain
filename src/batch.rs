@@ -7,6 +7,7 @@ use crate::{
         BlockProposal,
         ProposeResponse,
     },
+    storage::persist_block,
 };
 use anyhow::{Result, Context};
 use std::{
@@ -26,6 +27,12 @@ use openssl::{
     pkey::PKey,
     sign::Signer,
 };
+use tracing::{warn, debug, info_span, Instrument};
+use byteorder::{ByteOrder, BigEndian};
+use bincode::{
+    serde::decode_from_slice,
+    config::standard,
+};
 
 // frequency we check the buffer for flush conditions
 const TICK_MS: u64 = 50;
@@ -33,15 +40,36 @@ const TICK_MS: u64 = 50;
 pub async fn batch_loop(
     cfg: SequencerConfig,
     mut rx: Receiver<TxRequest>,
+    block_db: sled::Db,
 ) -> anyhow::Result<()> {
     let cfg = Arc::new(cfg); // shared – cheap to clone
 
     // ----------------------------------------------------------
-    //  live “tip” of the chain (already committed)
-    //  (-> load from DB on real startup)
+    //  init chain info
     // ----------------------------------------------------------
-    let mut next_height: u64      = 0;
-    let mut prev_hash:   [u8; 32] = [0; 32];
+    let chain = block_db
+        .open_tree("chain")
+        .context("opening sled tree `chain`")?;
+
+    let (mut next_height, mut prev_hash) = match chain.last()? {
+        Some((key_bytes, val_bytes)) => {
+            let height = BigEndian::read_u64(&key_bytes);
+            let (blk, _) = decode_from_slice::<Block, _>(&val_bytes, standard())
+                .context("decoding last block from sled")?;
+            let h = hash_header(&blk.header);
+
+            tracing::info!(
+                tip_height=height,
+                merkle_root=%hex::encode(blk.header.merkle_root),
+                "loaded chain tip from sled"
+            );
+            (height, h)
+        }
+        None => {
+            tracing::warn!("chain empty, defaulting to tip=0");
+            (0, [0u8; 32])
+        }
+    };
 
     // ----------------------------------------------------------
     //  current building buffer
@@ -69,6 +97,9 @@ pub async fn batch_loop(
     loop {
         tokio::select! {
             Some(tx) = rx.recv() => {                               // ingest task passed us a new Tx
+                if buffer.is_empty() {
+                    started_at = Instant::now();
+                }
                 buffer.push(tx);
             }
 
@@ -79,7 +110,7 @@ pub async fn batch_loop(
                 commit_q.insert(h, sealed);
 
                 while let Some(sealed) = commit_q.remove(&(next_height + 1)) { // while a proposal task is running, no other task will ever be started for the same height
-                    persist_block(&sealed).await?;
+                    persist_block(&sealed, &block_db).await?;
                     next_height += 1;
                     prev_hash    = hash_header(&sealed.block.header);
                 }
@@ -93,12 +124,39 @@ pub async fn batch_loop(
             let cfg_cloned = cfg.clone();
             let seal_tx_cloned = seal_tx.clone();
 
-            tokio::spawn(async move {
-                if let Ok((block, my_sig)) = make_local_header(txs, h_cur, p_hash, &cfg_cloned) {
-                    if let Ok(sigs) = collect_witness_sigs(block.header.clone(), my_sig, &cfg_cloned).await {
-                        let _ = seal_tx_cloned.send(Sealed { block, sigs }).await;
+            tracing::info!(
+                height = h_cur,
+                entries = txs.len(),
+                "flushing txs into new block, spawning make_local_header",
+            );
+
+            tokio::spawn({
+                let span = info_span!("seal_task", height = h_cur);
+                async move {
+                    let res = async {
+                        let (block, my_sig) =
+                            make_local_header(txs, h_cur, p_hash, &cfg_cloned)
+                                .context("make_local_header")?;
+            
+                        let sigs =
+                            collect_witness_sigs(block.header.clone(), my_sig, &cfg_cloned)
+                                .await
+                                .context("collect_witness_sigs")?;
+            
+                        seal_tx_cloned
+                            .send(Sealed { block, sigs })
+                            .await
+                            .context("seal_tx send")?;
+            
+                        Ok::<_, anyhow::Error>(())
+                    }
+                    .instrument(span)
+                    .await;
+            
+                    if let Err(e) = res {
+                        warn!("seal task aborted: {e:#}");
                     } else {
-                        tracing::warn!(height = h_cur, "quorum not reached – block dropped");
+                        debug!("seal task finished and queued for commit");
                     }
                 }
             });
@@ -116,6 +174,8 @@ fn make_local_header(
     cfg: &SequencerConfig,
 ) -> anyhow::Result<(Block, Vec<u8>)> {
     let (root, _) = merkle_root(&txs);
+    tracing::debug!(height, root = hex::encode(root), entries = txs.len(), "compute merkle root");
+
     let header = BlockHeader {
         height,
         prev_hash,
@@ -133,6 +193,13 @@ async fn collect_witness_sigs(
     my_sig: Vec<u8>,
     cfg: &SequencerConfig,
 ) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
+    if cfg.witness_threshold <= 1 {
+        tracing::info!(
+            threshold = cfg.witness_threshold,
+            "witness_threshold ≤ 1, skipping remote witnesses"
+        );
+        return Ok(vec![(cfg.sequencer_node_uuid.clone(), my_sig)]);
+    }
 
     let mut futs = FuturesUnordered::new();
     for ep in &cfg.witness_endpoints {
@@ -187,13 +254,6 @@ pub async fn send_proposal(
     Ok((resp.node_uuid, resp.signature))
 }
 
-async fn persist_block(sealed: &Sealed) -> anyhow::Result<()> {
-    // TODO write to RocksDB / sled
-    // TODO notify any subscribers / emit event
-    // TODO anchor
-    Ok(())
-}
-
 fn sign_with_node_key(msg: &[u8], cfg: &SequencerConfig) -> Result<Vec<u8>> {
     // load Ed25519 private key (PEM) from disk
     let key_pem = std::fs::read(&cfg.grpc_key)
@@ -201,18 +261,18 @@ fn sign_with_node_key(msg: &[u8], cfg: &SequencerConfig) -> Result<Vec<u8>> {
     let pkey = PKey::private_key_from_pem(&key_pem)
         .context("parsing node private key PEM")?;
 
-    // for Ed25519 create a no-digest signer
-    let mut signer =
-        Signer::new_without_digest(&pkey).context("creating Ed25519 signer")?;
-    signer.update(msg).context("feeding message to signer")?;
+    let mut signer = Signer::new_without_digest(&pkey)
+        .context("creating Ed25519 signer")?;
+
     let sig = signer
-        .sign_to_vec()
-        .context("finalising Ed25519 signature")?;
+        .sign_oneshot_to_vec(msg)
+        .context("Ed25519 one-shot sign")?;
+
     Ok(sig)
 }
 
 // what comes back from a proposal-task once it reaches quorum
-struct Sealed {
-    block: Block,                    // header + txs
-    sigs:  Vec<(String, Vec<u8>)>,   // who signed what
+pub struct Sealed {
+    pub block: Block,                    // header + txs
+    pub sigs:  Vec<(String, Vec<u8>)>,   // who signed what
 }

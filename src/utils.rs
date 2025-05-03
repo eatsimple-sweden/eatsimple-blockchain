@@ -1,3 +1,7 @@
+use crate::{
+    block::{Block, BlockHeader},
+};
+
 use rustls_pemfile::{read_all, read_one, Item, certs};
 use anyhow::{bail, Context, Result};
 use std::{
