@@ -259,13 +259,13 @@ fn sign_with_node_key(msg: &[u8], cfg: &SequencerConfig) -> Result<Vec<u8>> {
     let pkey = PKey::private_key_from_pem(&key_pem)
         .context("parsing node private key PEM")?;
 
-    // for Ed25519 create a no-digest signer
-    let mut signer =
-        Signer::new_without_digest(&pkey).context("creating Ed25519 signer")?;
-    signer.update(msg).context("feeding message to signer")?;
+    let mut signer = Signer::new_without_digest(&pkey)
+        .context("creating Ed25519 signer")?;
+
     let sig = signer
-        .sign_to_vec()
-        .context("finalising Ed25519 signature")?;
+        .sign_oneshot_to_vec(msg)
+        .context("Ed25519 one-shot sign")?;
+
     Ok(sig)
 }
 
