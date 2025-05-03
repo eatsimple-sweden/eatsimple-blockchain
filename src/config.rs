@@ -53,6 +53,7 @@ pub struct ContributorConfig {
 pub struct SequencerAppState { // idiomatic pattern to merge multiple shared contexts here
     pub cfg:        SequencerConfig,
     pub db:         PgPool,
+    pub block_db:   sled::Db,
     pub tx_ingest:  Sender<TxRequest>,
 }
 

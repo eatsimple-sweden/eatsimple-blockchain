@@ -3,7 +3,13 @@ use crate::{
     config::{SequencerConfig, SequencerAppState},
     grpc::{make_server},
     pb::{TxRequest},
-    handlers::enroll::src::enroll_handler,
+    handlers::{
+        post_enroll::src::post_enroll_handler,
+        get_chain_tip::src::get_chain_tip_handler,
+        get_block::src::get_block_handler,
+        get_list_blocks::src::get_list_blocks_handler,
+        get_tx::src::get_tx_handler,
+    },
     utils::{
         load_certs, load_key,
     },
@@ -15,7 +21,10 @@ use std::{
     sync::Arc,
 };
 use anyhow::Context;
-use axum::{routing::post, Router};
+use axum::{
+    Router,
+    routing::{post, get}
+};
 use axum_server::tls_rustls::RustlsConfig;
 use tokio::sync::mpsc;
 use tonic::transport::{ServerTlsConfig, Identity, Certificate};
@@ -66,16 +75,24 @@ pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
         .client_ca_root(client_ca_root);
 
     let (tx_ingest, rx_ingest) = mpsc::channel::<TxRequest>(10_000);
-    let state = SequencerAppState { cfg: cfg.clone(), db, tx_ingest };
-    tokio::spawn(batch_loop(cfg.clone(), rx_ingest, block_db));
+    let state = SequencerAppState { cfg: cfg.clone(), db, block_db: block_db.clone(), tx_ingest };
+    tokio::spawn(batch_loop(cfg.clone(), rx_ingest, block_db.clone()));
 
     // --------------------------------------------------------------
     //  start Axum (public) on 0.0.0.0:8443 or 443
     // --------------------------------------------------------------
     let axum_addr: SocketAddr = cfg.listen.parse()?;
     println!("[Sequencer] Starting HTTPS server at {}", axum_addr);
+    
+    let api = Router::new()
+        .route("/enroll", post(post_enroll_handler))
+        .route("/chain/tip", get(get_chain_tip_handler))
+        .route("/block", get(get_block_handler))
+        .route("/blocks", get(get_list_blocks_handler))
+        .route("/tx", get(get_tx_handler));
+
     let axum_app = Router::new()
-        .route("/enroll", post(enroll_handler))
+        .nest("/api", api)
         .with_state(state.clone());
 
     let http_srv = axum_server::bind_rustls(axum_addr, public_tls)
