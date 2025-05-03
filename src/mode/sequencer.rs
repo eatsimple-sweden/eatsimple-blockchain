@@ -87,7 +87,7 @@ pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
     let api = Router::new()
         .route("/enroll", post(post_enroll_handler))
         .route("/chain/tip", get(get_chain_tip_handler))
-        .route("/blocks", get(get_block_handler))
+        .route("/block", get(get_block_handler))
         .route("/blocks", get(get_list_blocks_handler))
         .route("/tx", get(get_tx_handler));
 
