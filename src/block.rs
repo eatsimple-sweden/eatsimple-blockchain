@@ -3,8 +3,10 @@ use crate::{
 };
 
 use blake3::Hasher;
-use bincode::config::standard;
-use bincode::serde::encode_to_vec;
+use bincode::{
+    serde::{decode_from_slice, encode_to_vec},
+    config::standard,
+};
 use serde::{Deserialize, Serialize};
 use anyhow::{anyhow, Result, Context, bail};
 use byteorder::{BigEndian, ReadBytesExt};
@@ -84,52 +86,61 @@ impl From<&BlockHeader> for PbHeader {      // for sending block header
     }
 }
 
-const MAX_TX_BYTES: usize = 1 * 1024 * 1024;
-const MAX_BLOCK_ENTRIES: usize = 1000;
+// const MAX_TX_BYTES: usize = 1 * 1024 * 1024;
+// const MAX_BLOCK_ENTRIES: usize = 1000;
+// pub fn decode_block(buf: &[u8]) -> anyhow::Result<Block> {
+//     let mut cur = Cursor::new(buf);
+
+//     let height          = cur.read_u64::<BigEndian>()?;
+//     let mut prev_hash   = [0; 32];
+//     cur.read_exact(&mut prev_hash)?;
+//     let mut merkle      = [0; 32];
+//     cur.read_exact(&mut merkle)?;
+//     let timestamp_ms    = cur.read_i64::<BigEndian>()?;
+//     let entries         = cur.read_u32::<BigEndian>()? as usize;
+
+//     if entries == 0 || entries > MAX_BLOCK_ENTRIES {
+//         bail!("invalid block: entries={entries} (cap {MAX_BLOCK_ENTRIES})");
+//     }
+
+//     let mut txs = Vec::with_capacity(entries as usize);
+//     for _ in 0..entries {
+//         let len = cur.read_u32::<BigEndian>()? as usize;
+
+//         // sanity-check the length -------------------------
+//         if len == 0 || len > MAX_TX_BYTES {
+//             bail!("invalid Tx length {len} B (cap {MAX_TX_BYTES} B)");
+//         }
+//         let start = cur.position() as usize;
+//         let end   = start.checked_add(len)
+//             .filter(|&e| e <= buf.len())
+//             .context("Tx length exceeds block buffer")?;
+
+//         let slice = &buf[start..end];
+//         let tx = TxRequest::decode(slice)
+//             .context("prost decode TxRequest")?;
+
+//         txs.push(tx);
+//         cur.set_position(end as u64);
+//     }
+
+//     Ok(Block {
+//         header: BlockHeader {
+//             height,
+//             prev_hash,
+//             merkle_root: merkle,
+//             timestamp_ms,
+//             entries: entries as u32,
+//         },
+//         txs,
+//     })
+// }
+
+
 pub fn decode_block(buf: &[u8]) -> anyhow::Result<Block> {
-    let mut cur = Cursor::new(buf);
-
-    let height          = cur.read_u64::<BigEndian>()?;
-    let mut prev_hash   = [0; 32];
-    cur.read_exact(&mut prev_hash)?;
-    let mut merkle      = [0; 32];
-    cur.read_exact(&mut merkle)?;
-    let timestamp_ms    = cur.read_i64::<BigEndian>()?;
-    let entries         = cur.read_u32::<BigEndian>()? as usize;
-
-    if entries == 0 || entries > MAX_BLOCK_ENTRIES {
-        bail!("invalid block: entries={entries} (cap {MAX_BLOCK_ENTRIES})");
-    }
-
-    let mut txs = Vec::with_capacity(entries as usize);
-    for _ in 0..entries {
-        let len = cur.read_u32::<BigEndian>()? as usize;
-
-        // sanity-check the length -------------------------
-        if len == 0 || len > MAX_TX_BYTES {
-            bail!("invalid Tx length {len} B (cap {MAX_TX_BYTES} B)");
-        }
-        let start = cur.position() as usize;
-        let end   = start.checked_add(len)
-            .filter(|&e| e <= buf.len())
-            .context("Tx length exceeds block buffer")?;
-
-        let slice = &buf[start..end];
-        let tx = TxRequest::decode(slice)
-            .context("prost decode TxRequest")?;
-
-        txs.push(tx);
-        cur.set_position(end as u64);
-    }
-
-    Ok(Block {
-        header: BlockHeader {
-            height,
-            prev_hash,
-            merkle_root: merkle,
-            timestamp_ms,
-            entries: entries as u32,
-        },
-        txs,
-    })
+    // decode_from_slice returns (T, bytes_read)
+    let (blk, _): (Block, _) =
+        decode_from_slice(buf, standard())
+            .context("bincode decode Block")?;
+    Ok(blk)
 }
