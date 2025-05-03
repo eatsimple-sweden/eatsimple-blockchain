@@ -75,7 +75,7 @@ pub async fn run(cfg: SequencerConfig) -> anyhow::Result<()> {
         .client_ca_root(client_ca_root);
 
     let (tx_ingest, rx_ingest) = mpsc::channel::<TxRequest>(10_000);
-    let state = SequencerAppState { cfg: cfg.clone(), db, block_db.clone(), tx_ingest };
+    let state = SequencerAppState { cfg: cfg.clone(), db, block_db: block_db.clone(), tx_ingest };
     tokio::spawn(batch_loop(cfg.clone(), rx_ingest, block_db.clone()));
 
     // --------------------------------------------------------------
